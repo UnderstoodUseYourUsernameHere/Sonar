@@ -267,3 +267,96 @@ func _update_pulses(delta: float) -> void:
 func _reveal_walls_for_pulse(pulse: SonarPulse) -> void:
 	for cell in wall_cells:
 		var distance: float = pulse.origin.distance_to(_cell_center(cell))
+		
+		if distance > pulse.previous_radius and distance <= pulse.radius:
+			if _has_line_of_sight(pulse.origin_cell, cell):
+				wall_last_lit[cell] = game_time
+
+func _draw() -> void:
+	if not map_is_valid:
+		return
+	
+	var map_pixel_size: Vector2 = Vector2(
+		map_width * TILE_SIZE,
+		map_height * TILE_SIZE
+	)
+	
+	draw_rect(
+		Rect2(Vector2.ZERO, map_pixel_size),
+		BACKGROUND_COLOR,
+		true
+	)
+	_draw_revealed_walls()
+	_draw_pulses()
+	_draw_player()
+
+func _draw_revealed_walls() -> void:
+	for cell in wall_cells:
+		if not wall_last_lit.has(cell):
+			continue
+		
+		var seconds_since_lit: float = game_time - wall_last_lit[cell]
+		
+		var flash: float = clampf(
+			1.0 - seconds_since_lit / WALL_FLASH_DURATION,
+			0.0,
+			1.0
+		)
+		flash = flash * flash
+		
+		var alpha: float = lerpf(WALL_DIM_SEEN_ALPHA, 1.0, flash)
+		var color: Color = Color(WALL_COLOR, alpha)
+		
+		var wall_rect: Rect2 = Rect2(
+			Vector2(
+				float(cell.x * TILE_SIZE) + 2.0,
+				float(cell.y * TILE_SIZE) + 2.0
+			),
+			
+			Vector2(
+				float(TILE_SIZE) - 4.0,
+				float(TILE_SIZE) - 4.0
+			)
+		)
+		draw_rect(wall_rect, color, false, 1.5)
+
+func _draw_pulses() -> void:
+	for pulse in active_pulses:
+		var life: float = pulse.radius / PING_MAX_RADIUS
+		var alpha: float = 1.0 - life
+		
+		draw_arc(
+			pulse.origin,
+			pulse.radius,
+			0.0,
+			TAU,
+			64,
+			Color(PING_RING_COLOR, alpha),
+			PING_RING_WIDTH,
+			true
+		)
+
+func _draw_player() -> void:
+	var forward: Vector2 = Vector2(
+		float(player_facing.x),
+		float(player_facing.y)
+	)
+	var side: Vector2 = Vector2(-forward.y, forward.x)
+	
+	var nose: Vector2 = (
+		player_draw_position + forward * (TILE_SIZE * 0.30)
+	)
+	
+	var rear_center: Vector2 = (
+		player_draw_position - forward * (TILE_SIZE * 0.20)
+	)
+	
+	var half_width: float = TILE_SIZE * 0.20
+	
+	var triangle: PackedVector2Array = PackedVector2Array([
+		nose,
+		rear_center + side * half_width,
+		rear_center - side * half_width
+	])
+	
+	draw_colored_polygon(triangle, PLAYER_COLOR)
