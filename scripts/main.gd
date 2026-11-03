@@ -1,11 +1,269 @@
 extends Node2D
 
+const TILE_SIZE: int = 48
+const MOVE_TIME_PER_TILE: float = 0.16
 
-# Called when the node enters the scene tree for the first time.
+const BACKGROUND_COLOR: Color = Color(0.0, 0.0, 0.0, 1.0)
+const WALL_COLOR: Color = Color(0.12, 0.90, 0.38, 1.0)
+const PLAYER_COLOR: Color = Color(0.96, 0.98, 1.0, 1.0)
+
+const PING_SPEED: float = 420.0 ## This is how fast the ring/circle grows 
+const PING_MAX_RADIUS: float = 8.5 * TILE_SIZE
+const PING_COOLDOWN: float = 0.4
+const PING_RING_WIDTH: float = 2.0
+const PING_RING_COLOR: Color = Color(0.35, 1.0, 0.55, 1.0)
+
+const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
+const WALL_FLASH_DURATION: float = 1.2
+
+const MAP_ROWS: Array[String] = [
+	"####################",
+	"#E.................#",
+	"#..###.............#",
+	"#..#......#........#",
+	"#..#......#........#",
+	"#..#..####.....#...#",
+	"#.......#.......#..#",
+	"#.......#..........#",
+	"#..............#...#",
+	"#..######..........#",
+	"#..............#...#",
+	"#..........#.......#",
+	"#...........#......#",
+	"#..................#",
+	"####################"
+]
+
+class SonarPulse:
+	var origin: Vector2
+	var origin_cell: Vector2i
+	var radius: float = 0.0
+	var previous_radius: float = 0.0
+	
+	func _init(start_origin: Vector2, start_cell: Vector2i) -> void:
+		origin = start_origin
+		origin_cell = start_cell
+
+var map_width: int = 0
+var map_height: int = 0
+var map_is_valid: bool = false
+
+var player_cell: Vector2i = Vector2i.ZERO
+var player_draw_position: Vector2 = Vector2.ZERO
+var player_facing: Vector2i = Vector2i(0, -1)
+
+var is_moving: bool = false
+var move_source: Vector2 = Vector2.ZERO
+var move_destination: Vector2 = Vector2.ZERO
+var move_destination_cell: Vector2i = Vector2i.ZERO
+var move_elapsed: float = 0.0
+
+var buffered_direction: Vector2i = Vector2i.ZERO
+
+var game_time: float = 0.0
+var active_pulses: Array[SonarPulse] = []
+var wall_cells: Array[Vector2i] = []
+var wall_last_lit: Dictionary = {}
+var last_ping_cell: Vector2i = Vector2i.ZERO
+var last_ping_time: float = -1000.0
+
 func _ready() -> void:
-	pass # Replace with function body.
+	if not _parse_map():
+		set_process(false)
+		return
+	
+	map_is_valid = true
+	player_draw_position = _cell_center(player_cell)
+	queue_redraw()
 
+func _parse_map() -> bool:
+	if MAP_ROWS.is_empty():
+		push_error("MAP_ROWS cant be empty!")
+		return false
+	
+	map_height = MAP_ROWS.size()
+	map_width = MAP_ROWS[0].length()
+	
+	var start_count: int = 0
+	
+	for y in range(map_height):
+		var row: String = MAP_ROWS[y]
+		
+		if row.length() != map_width:
+			push_error("MAP_ROWS row %d has %d characters; expected %d!" % [y, row.length(), map_width])
+			return false
+		
+		for x in range(map_width): 
+			var tile: String = row.substr(x, 1)
+			
+			if tile == "E":
+				start_count += 1
+				player_cell = Vector2i(x, y)
+			elif tile == "#":
+				wall_cells.append(Vector2i(x, y))
+			elif tile != ".":
+				push_error("Unsupported map character '%s' at cell (%d, %d)!" % [tile, x, y])
+				return false
+		
+	if start_count != 1:
+		push_error("Expected exactly one E start marker but found %d!" % [start_count])
+		return false
+	return true
 
-# Called every frame. 'delta' is the elapsed time since the previous frame.
 func _process(delta: float) -> void:
-	pass
+	if not map_is_valid:
+		return
+	
+	game_time += delta
+	
+	if Input.is_action_just_pressed("ping"):
+		_try_emit_ping()
+	
+	var requested_direction: Vector2i = _read_move_direction()
+	if requested_direction != Vector2i.ZERO:
+		buffered_direction = requested_direction
+	
+	if is_moving:
+		move_elapsed += delta
+		
+		var progress: float = minf(move_elapsed / MOVE_TIME_PER_TILE, 1.0)
+		
+		player_draw_position = move_source.lerp(move_destination, progress)
+		
+		if progress >= 1.0:
+			player_cell = move_destination_cell
+			player_draw_position = move_destination
+			is_moving = false
+	
+	if not is_moving and buffered_direction != Vector2i.ZERO:
+		var next_direction: Vector2i = buffered_direction
+		buffered_direction = Vector2i.ZERO
+		_try_start_move(next_direction)
+	
+	_update_pulses(delta)
+	
+	queue_redraw()
+
+func _read_move_direction() -> Vector2i:
+	var input_vector: Vector2 = Input.get_vector(
+		"move_left",
+		"move_right",
+		"move_up",
+		"move_down"
+	)
+	
+	if input_vector.is_zero_approx():
+		return Vector2i.ZERO
+	
+	if absf(input_vector.x) > absf(input_vector.y):
+		if input_vector.x > 0.0:
+			return Vector2i(1, 0)
+		return Vector2i(-1, 0)
+	
+	if input_vector.y > 0.0:
+		return Vector2i(0, 1)
+	return Vector2i(0, -1)
+
+func _try_start_move(direction: Vector2i) -> void:
+	if player_facing != direction:
+		player_facing = direction
+	
+	var destination_cell: Vector2i = player_cell + direction
+	
+	if not _is_walkable(destination_cell):
+		return
+	
+	move_destination_cell = destination_cell
+	move_source = player_draw_position
+	move_destination = _cell_center(destination_cell)
+	move_elapsed = 0.0
+	is_moving = true
+	
+
+func _is_walkable(cell: Vector2i) -> bool:
+	if cell.x < 0 or cell.y < 0:
+		return false
+	if cell.x >= map_width or cell.y >= map_height:
+		return false
+	
+	var tile: String = MAP_ROWS[cell.y].substr(cell.x, 1)
+	return tile != "#"
+	
+
+func _cell_center(cell: Vector2i) -> Vector2:
+	return Vector2(
+		(float(cell.x) + 0.5) * TILE_SIZE,
+		(float(cell.y) + 0.5) * TILE_SIZE
+	)
+
+func _cell_from_position(pixel_position: Vector2) -> Vector2i:
+	return Vector2i(
+		floori(pixel_position.x / TILE_SIZE),
+		floori(pixel_position.y / TILE_SIZE)
+	)
+
+func _is_wall(cell: Vector2i) -> bool:
+	if cell.x < 0 or cell.y < 0:
+		return true
+	if cell.x >= map_width or cell.y >= map_height:
+		return true
+	
+	return MAP_ROWS[cell.y].substr(cell.x, 1) == "#"
+
+func _has_line_of_sight(from_cell: Vector2i, to_cell: Vector2i) -> bool:
+	var x: int = from_cell.x
+	var y: int = from_cell.y
+	
+	var dx: int = absi(to_cell.x - from_cell.x)
+	var dy: int = -absi(to_cell.y - from_cell.y)
+	var step_x: int = 1 if from_cell.x < to_cell.x else -1
+	var step_y: int = 1 if from_cell.y < to_cell.y else -1 
+	var error: int = dx + dy
+	
+	while true: 
+		if x == to_cell.x and y == to_cell.y:
+			return true
+		
+		var is_start: bool = (x == from_cell.x and y == from_cell.y)
+		if not is_start and _is_wall(Vector2i(x, y)):
+			return false
+			
+		var error_doubled: int = 2 * error
+		
+		if error_doubled >= dy:
+			error += dy
+			x += step_x
+		
+		if error_doubled <= dx: 
+			error += dx
+			y += step_y
+	return true
+
+func _try_emit_ping() -> void:
+	if game_time - last_ping_time < PING_COOLDOWN:
+		return
+	
+	var origin: Vector2 = player_draw_position
+	var origin_cell: Vector2i = _cell_from_position(origin)
+	
+	active_pulses.append(SonarPulse.new(origin, origin_cell))
+	
+	last_ping_cell = origin_cell
+	last_ping_time = game_time
+
+func _update_pulses(delta: float) -> void:
+	if active_pulses.is_empty():
+		return
+	
+	for pulse in active_pulses:
+		pulse.previous_radius = pulse.radius
+		pulse.radius = minf(pulse.radius + PING_SPEED * delta, PING_MAX_RADIUS)
+		_reveal_walls_for_pulse(pulse)
+	
+	for i in range(active_pulses.size() - 1, -1, -1):
+		if active_pulses[i].radius >= PING_MAX_RADIUS:
+			active_pulses.remove_at(i)
+
+func _reveal_walls_for_pulse(pulse: SonarPulse) -> void:
+	for cell in wall_cells:
+		var distance: float = pulse.origin.distance_to(_cell_center(cell))

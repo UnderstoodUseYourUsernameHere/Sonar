@@ -11,6 +11,7 @@ config_version=5
 [application]
 
 config/name="Sonar"
+run/main_scene="uid://cbt4537s1ck52"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
 
