@@ -17,7 +17,7 @@ const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never d
 const WALL_FLASH_DURATION: float = 1.2
 
 const MONSTER_COLOR: Color = Color(0.85, 0.12, 0.15, 1.0)
-const MONSTER_DOT_COUNT: int = 11
+const MONSTER_DOT_COUNT: int = 3
 const MONSTER_CLUSTER_RADIUS: float = TILE_SIZE * 0.38
 
 const DEBUG_SHOW_MONSTER: bool = true
@@ -29,7 +29,7 @@ const MAP_ROWS: Array[String] = [
 	"#..#......#........#",
 	"#..#......#........#",
 	"#..#..####.....#...#",
-	"#.......#....M..#..#",
+	"#.......#.......#..#",
 	"#.......#..........#",
 	"#..............#...#",
 	"#..######..........#",
@@ -84,7 +84,9 @@ func _ready() -> void:
 	
 	map_is_valid = true
 	player_draw_position = _cell_center(player_cell)
-	print("Monster spawn cell: ", monster_cell)
+	monster_draw_position = _cell_center(monster_cell)
+	_build_monster_shape()
+	print("Offsets: ", monster_dot_offsets.size(), " | Sizes: ", monster_dot_sizes.size())
 	queue_redraw()
 
 func _parse_map() -> bool:
@@ -307,7 +309,28 @@ func _draw() -> void:
 	)
 	_draw_revealed_walls()
 	_draw_pulses()
+	
+	if DEBUG_SHOW_MONSTER:
+		_draw_monster_at(monster_draw_position, 1.0)
+	
 	_draw_player()
+
+func _build_monster_shape() -> void:
+	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
+	rng.seed = 1337
+	
+	monster_dot_offsets.clear()
+	monster_dot_sizes.clear()
+	
+	for _dot_index in range(MONSTER_DOT_COUNT):
+		var angle: float = rng.randf_range(0.0, TAU)
+		var distance: float = rng.randf_range(0.0, MONSTER_CLUSTER_RADIUS)
+		
+		var dot_offset: Vector2 = Vector2.from_angle(angle) * distance
+		var dot_radius: float = rng.randf_range(1.5, 4.0)
+		
+		monster_dot_offsets.append(dot_offset)
+		monster_dot_sizes.append(dot_radius)
 
 func _draw_revealed_walls() -> void:
 	for cell in wall_cells:
@@ -379,3 +402,12 @@ func _draw_player() -> void:
 	])
 	
 	draw_colored_polygon(triangle, PLAYER_COLOR)
+
+func _draw_monster_at(center: Vector2, alpha: float) -> void:
+	var color: Color = Color(MONSTER_COLOR, alpha)
+	
+	for dot_index in range(monster_dot_offsets.size()):
+		var dot_position: Vector2 = center + monster_dot_offsets[dot_index]
+		var dot_radius: float = monster_dot_sizes[dot_index]
+		
+		draw_circle(dot_position, dot_radius, color)
