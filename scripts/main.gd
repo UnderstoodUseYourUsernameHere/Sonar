@@ -19,6 +19,7 @@ const WALL_FLASH_DURATION: float = 1.2
 const MONSTER_COLOR: Color = Color(0.85, 0.12, 0.15, 1.0)
 const MONSTER_DOT_COUNT: int = 11
 const MONSTER_CLUSTER_RADIUS: float = TILE_SIZE * 0.38
+const MONSTER_MOVE_TIME_PER_TILE: float = 0.22
 
 const DEBUG_SHOW_MONSTER: bool = true
 
@@ -76,8 +77,13 @@ var monster_cell: Vector2i = Vector2i.ZERO
 var monster_draw_position: Vector2 = Vector2.ZERO
 var monster_dot_offsets: Array[Vector2] = []
 var monster_dot_sizes: Array[float] = []
+var is_monster_moving: bool = false
+var monster_move_source: Vector2 = Vector2.ZERO
+var monster_move_destination: Vector2 = Vector2.ZERO
+var monster_move_destination_cell: Vector2i = Vector2i.ZERO
+var monster_move_elapsed: float = 0.0
 var astar: AStarGrid2D = AStarGrid2D.new() ## I really like this name for some reason!
-var debug_path: Array[Vector2i] = []
+var monster_path: Array[Vector2i] = []
 
 func _ready() -> void:
 	if not _parse_map():
@@ -90,12 +96,12 @@ func _ready() -> void:
 	_build_monster_shape()
 	
 	_build_astar()
-	debug_path = astar.get_id_path(monster_cell, player_cell)
+	_set_monster_path(player_cell)
 	
-	if debug_path.is_empty():
-		push_warning("No debug route found between the spawn cells...?")
+	if monster_path.is_empty():
+		push_warning("No monster route was found at beginning?")
 	print("Offsets: ", monster_dot_offsets.size(), " | Sizes: ", monster_dot_sizes.size())
-	print("Debug path: ", debug_path)
+	print("Debug path: ", monster_path)
 	queue_redraw()
 
 func _parse_map() -> bool:
@@ -150,6 +156,39 @@ func _build_astar() -> void:
 	for cell in wall_cells:
 		astar.set_point_solid(cell, true)
 
+func _set_monster_path(target_cell: Vector2i) -> void:
+	monster_path = astar.get_id_path(monster_cell, target_cell)
+	
+	if not monster_path.is_empty() and monster_path[0] == monster_cell:
+		monster_path.pop_front()
+
+func _update_monster_movement(delta: float) -> void:
+	if is_monster_moving:
+		monster_move_elapsed += delta
+		
+		var progress: float = minf(
+			monster_move_elapsed / MONSTER_MOVE_TIME_PER_TILE,
+			1.0
+		)
+		
+		monster_draw_position = monster_move_source.lerp(
+			monster_move_destination,
+			progress
+		)
+		
+		if progress >= 1.0:
+			monster_cell = monster_move_destination_cell
+			monster_draw_position = monster_move_destination
+			is_monster_moving = false
+	
+	if not is_monster_moving and not monster_path.is_empty():
+		monster_move_destination_cell = monster_path.pop_front()
+		monster_move_source = monster_draw_position
+		monster_move_destination = _cell_center(monster_move_destination_cell)
+		monster_move_elapsed = 0.0
+		is_monster_moving = true
+		
+
 func _process(delta: float) -> void:
 	if not map_is_valid:
 		return
@@ -181,6 +220,7 @@ func _process(delta: float) -> void:
 		_try_start_move(next_direction)
 	
 	_update_pulses(delta)
+	_update_monster_movement(delta)
 	
 	queue_redraw()
 
@@ -435,6 +475,6 @@ func _draw_monster_at(center: Vector2, alpha: float) -> void:
 func _draw_debug_path() -> void:
 	var color: Color = Color(1.0, 0.85, 0.2, 0.8)
 	
-	for cell in debug_path:
+	for cell in monster_path:
 		var center: Vector2 = _cell_center(cell)
 		draw_circle(center, 3.0, color)
