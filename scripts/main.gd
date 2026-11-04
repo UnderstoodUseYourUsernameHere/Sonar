@@ -20,6 +20,10 @@ const MONSTER_ROAM_WAIT: float = 0.75
 const MONSTER_ROAM_MIN_DISTANCE: int = 4
 const MONSTER_ROAM_ATTEMPTS: int = 40
 
+const MONSTER_HUNT_DURATION: float = 4.5 
+const MONSTER_HUNT_RADIUS: int = 3
+const MONSTER_HUNT_WAIT: float = 0.25
+
 const MONSTER_COLOR: Color = Color(0.85, 0.12, 0.15, 1.0)
 const MONSTER_DOT_COUNT: int = 11
 const MONSTER_CLUSTER_RADIUS: float = TILE_SIZE * 0.38
@@ -104,6 +108,10 @@ var monster_state: MonsterState = MonsterState.ROAMING
 var monster_last_heard_ping_time: float = -1000.0
 var monster_investigation_target: Vector2i = Vector2i.ZERO
 var monster_needs_new_path: bool = false
+
+var monster_hunt_center: Vector2i = Vector2i.ZERO
+var monster_hunt_time_remaining: float = 0.0
+var monster_hunt_wait_remaining: float = 0.0 
 
 var astar: AStarGrid2D = AStarGrid2D.new() ## I really like this name for some reason!
 var monster_path: Array[Vector2i] = []
@@ -262,6 +270,34 @@ func _begin_monster_investigation(target_cell: Vector2i) -> void:
 	monster_roam_wait_remaining = 0
 	
 
+func _begin_monster_hunt(center_cell: Vector2i) -> void:
+	monster_state = MonsterState.HUNTING
+	monster_hunt_center = center_cell 
+	monster_hunt_time_remaining = MONSTER_HUNT_DURATION
+	monster_hunt_wait_remaining = 0.0
+	monster_path.clear()
+
+func _pick_monster_hunt_target() -> Vector2i:
+	var candidates: Array[Vector2i] = []
+	
+	for cell in walkable_cells:
+		var distance: int = (
+			absi(cell.x - monster_hunt_center.x) + absi(cell.y - monster_hunt_center.y)
+		)
+		
+		if (
+			distance > 0 
+			and distance <= MONSTER_HUNT_RADIUS
+			and cell != monster_cell
+		):
+			candidates.append(cell)
+	if candidates.is_empty():
+		return monster_hunt_center
+	
+	var random_index: int = monster_rng.randi_range(0, candidates.size() - 1)
+	
+	return candidates[random_index]
+
 func _update_monster_investigating() -> void:
 	if is_monster_moving:
 		return
@@ -272,8 +308,7 @@ func _update_monster_investigating() -> void:
 	
 	if monster_path.is_empty():
 		if monster_cell == monster_investigation_target:
-			monster_state = MonsterState.ROAMING
-			monster_roam_wait_remaining = MONSTER_ROAM_WAIT
+			_begin_monster_hunt(monster_investigation_target)
 		else:
 			push_warning("Monster couldnt reach ping location?!")
 			monster_state = MonsterState.ROAMING
@@ -282,8 +317,37 @@ func _update_monster_investigating() -> void:
 		return
 	
 	if monster_path.is_empty():
-		monster_state = MonsterState.ROAMING
-		monster_roam_wait_remaining = MONSTER_ROAM_WAIT
+		_begin_monster_investigation(monster_investigation_target)
+
+func _update_monster_hunting(delta: float) -> void:
+	monster_hunt_time_remaining -= delta
+	
+	if monster_hunt_time_remaining <= 0.0:
+		monster_path.clear()
+		
+		if not is_monster_moving:
+			monster_state = MonsterState.ROAMING
+			monster_roam_wait_remaining = MONSTER_ROAM_WAIT
+		
+		return
+	
+	if is_monster_moving:
+		return
+	
+	if not monster_path.is_empty():
+		return
+	
+	monster_hunt_wait_remaining -= delta
+	
+	if monster_hunt_wait_remaining > 0.0:
+		return
+	
+	var target_cell: Vector2i = _pick_monster_hunt_target()
+	
+	if target_cell != monster_cell:
+		_set_monster_path(target_cell)
+	
+	monster_hunt_wait_remaining = MONSTER_HUNT_WAIT
 
 func _process(delta: float) -> void:
 	if not map_is_valid:
@@ -454,7 +518,7 @@ func _update_monster_ai(delta: float) -> void:
 			_update_monster_investigating()
 		
 		MonsterState.HUNTING:
-			pass
+			_update_monster_hunting(delta)
 
 func _reveal_walls_for_pulse(pulse: SonarPulse) -> void:
 	for cell in wall_cells:
@@ -586,11 +650,19 @@ func _draw_monster_at(center: Vector2, alpha: float) -> void:
 		draw_circle(dot_position, dot_radius, color)
 
 func _draw_monster_ai_debug() -> void:
-	if monster_state != MonsterState.INVESTIGATING:
+	var target_center: Vector2
+	var marker_color: Color
+	
+	if monster_state == MonsterState.INVESTIGATING:
+		target_center = _cell_center(monster_investigation_target)
+		marker_color = Color(1.0, 0.55, 0.1, 0.9)
+	elif monster_state == MonsterState.HUNTING:
+		target_center = _cell_center(monster_hunt_center)
+		marker_color = Color(0.7, 0.2, 1.0, 0.9)
+	else:
 		return
 	
-	var target_center: Vector2 = _cell_center(monster_investigation_target)
-	var marker_rect: Rect2 = Rect2(
+	var marker_rect : Rect2 = Rect2(
 		target_center - Vector2(8.0, 8.0),
 		Vector2(16.0, 16.0)
 	)
