@@ -11,13 +11,13 @@ const PING_SPEED: float = 420.0 ## This is how fast the ring/circle grows
 const PING_MAX_RADIUS: float = 8.5 * TILE_SIZE
 const PING_COOLDOWN: float = 0.4
 const PING_RING_WIDTH: float = 2.0
-const PING_RING_COLOR: Color = Color(0.35, 1.0, 0.55, 1.0)
+const PING_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
 
 const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
 const WALL_FLASH_DURATION: float = 1.2
 
 const MONSTER_COLOR: Color = Color(0.85, 0.12, 0.15, 1.0)
-const MONSTER_DOT_COUNT: int = 3
+const MONSTER_DOT_COUNT: int = 11
 const MONSTER_CLUSTER_RADIUS: float = TILE_SIZE * 0.38
 
 const DEBUG_SHOW_MONSTER: bool = true
@@ -76,6 +76,8 @@ var monster_cell: Vector2i = Vector2i.ZERO
 var monster_draw_position: Vector2 = Vector2.ZERO
 var monster_dot_offsets: Array[Vector2] = []
 var monster_dot_sizes: Array[float] = []
+var astar: AStarGrid2D = AStarGrid2D.new() ## I really like this name for some reason!
+var debug_path: Array[Vector2i] = []
 
 func _ready() -> void:
 	if not _parse_map():
@@ -86,7 +88,14 @@ func _ready() -> void:
 	player_draw_position = _cell_center(player_cell)
 	monster_draw_position = _cell_center(monster_cell)
 	_build_monster_shape()
+	
+	_build_astar()
+	debug_path = astar.get_id_path(monster_cell, player_cell)
+	
+	if debug_path.is_empty():
+		push_warning("No debug route found between the spawn cells...?")
 	print("Offsets: ", monster_dot_offsets.size(), " | Sizes: ", monster_dot_sizes.size())
+	print("Debug path: ", debug_path)
 	queue_redraw()
 
 func _parse_map() -> bool:
@@ -130,6 +139,16 @@ func _parse_map() -> bool:
 		return false
 	return true
 
+func _build_astar() -> void:
+	astar.region = Rect2i(0, 0, map_width, map_height)
+	astar.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_NEVER
+	astar.default_compute_heuristic = AStarGrid2D.HEURISTIC_MANHATTAN
+	astar.default_estimate_heuristic = AStarGrid2D.HEURISTIC_MANHATTAN
+	
+	astar.update()
+	
+	for cell in wall_cells:
+		astar.set_point_solid(cell, true)
 
 func _process(delta: float) -> void:
 	if not map_is_valid:
@@ -311,6 +330,7 @@ func _draw() -> void:
 	_draw_pulses()
 	
 	if DEBUG_SHOW_MONSTER:
+		_draw_debug_path()
 		_draw_monster_at(monster_draw_position, 1.0)
 	
 	_draw_player()
@@ -411,3 +431,10 @@ func _draw_monster_at(center: Vector2, alpha: float) -> void:
 		var dot_radius: float = monster_dot_sizes[dot_index]
 		
 		draw_circle(dot_position, dot_radius, color)
+
+func _draw_debug_path() -> void:
+	var color: Color = Color(1.0, 0.85, 0.2, 0.8)
+	
+	for cell in debug_path:
+		var center: Vector2 = _cell_center(cell)
+		draw_circle(center, 3.0, color)
