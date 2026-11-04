@@ -55,6 +55,12 @@ class SonarPulse:
 		origin = start_origin
 		origin_cell = start_cell
 
+enum MonsterState {
+	ROAMING,
+	INVESTIGATING,
+	HUNTING
+}
+
 var map_width: int = 0
 var map_height: int = 0
 var map_is_valid: bool = false
@@ -78,17 +84,27 @@ var walkable_cells: Array[Vector2i] = []
 var wall_last_lit: Dictionary = {}
 var last_ping_cell: Vector2i = Vector2i.ZERO
 var last_ping_time: float = -1000.0
+
 var monster_cell: Vector2i = Vector2i.ZERO
 var monster_draw_position: Vector2 = Vector2.ZERO
 var monster_dot_offsets: Array[Vector2] = []
 var monster_dot_sizes: Array[float] = []
+
 var is_monster_moving: bool = false
+
 var monster_move_source: Vector2 = Vector2.ZERO
 var monster_move_destination: Vector2 = Vector2.ZERO
 var monster_move_destination_cell: Vector2i = Vector2i.ZERO
 var monster_move_elapsed: float = 0.0
+
 var monster_rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var monster_roam_wait_remaining: float = 0.0
+
+var monster_state: MonsterState = MonsterState.ROAMING
+var monster_last_heard_ping_time: float = -1000.0
+var monster_investigation_target: Vector2i = Vector2i.ZERO
+var monster_needs_new_path: bool = false
+
 var astar: AStarGrid2D = AStarGrid2D.new() ## I really like this name for some reason!
 var monster_path: Array[Vector2i] = []
 
@@ -236,6 +252,39 @@ func _update_monster_roaming(delta: float) -> void:
 	
 	monster_roam_wait_remaining = MONSTER_ROAM_WAIT
 
+func _begin_monster_investigation(target_cell: Vector2i) -> void:
+	monster_state = MonsterState.INVESTIGATING
+	monster_investigation_target = target_cell
+	
+	monster_path.clear()
+	
+	monster_needs_new_path = true
+	monster_roam_wait_remaining = 0
+	
+
+func _update_monster_investigating() -> void:
+	if is_monster_moving:
+		return
+	
+	if monster_needs_new_path:
+		_set_monster_path(monster_investigation_target)
+		monster_needs_new_path = false
+	
+	if monster_path.is_empty():
+		if monster_cell == monster_investigation_target:
+			monster_state = MonsterState.ROAMING
+			monster_roam_wait_remaining = MONSTER_ROAM_WAIT
+		else:
+			push_warning("Monster couldnt reach ping location?!")
+			monster_state = MonsterState.ROAMING
+			monster_roam_wait_remaining = MONSTER_ROAM_WAIT
+	
+		return
+	
+	if monster_path.is_empty():
+		monster_state = MonsterState.ROAMING
+		monster_roam_wait_remaining = MONSTER_ROAM_WAIT
+
 func _process(delta: float) -> void:
 	if not map_is_valid:
 		return
@@ -268,7 +317,7 @@ func _process(delta: float) -> void:
 	
 	_update_pulses(delta)
 	_update_monster_movement(delta)
-	_update_monster_roaming(delta)
+	_update_monster_ai(delta)
 	
 	queue_redraw()
 
@@ -392,6 +441,21 @@ func _update_pulses(delta: float) -> void:
 		if active_pulses[i].radius >= PING_MAX_RADIUS:
 			active_pulses.remove_at(i)
 
+func _update_monster_ai(delta: float) -> void:
+	if last_ping_time > monster_last_heard_ping_time:
+		monster_last_heard_ping_time = last_ping_time
+		_begin_monster_investigation(last_ping_cell)
+	
+	match monster_state:
+		MonsterState.ROAMING:
+			_update_monster_roaming(delta)
+		
+		MonsterState.INVESTIGATING:
+			_update_monster_investigating()
+		
+		MonsterState.HUNTING:
+			pass
+
 func _reveal_walls_for_pulse(pulse: SonarPulse) -> void:
 	for cell in wall_cells:
 		var distance: float = pulse.origin.distance_to(_cell_center(cell))
@@ -419,6 +483,7 @@ func _draw() -> void:
 	
 	if DEBUG_SHOW_MONSTER:
 		_draw_debug_path()
+		_draw_monster_ai_debug()
 		_draw_monster_at(monster_draw_position, 1.0)
 	
 	_draw_player()
@@ -519,6 +584,23 @@ func _draw_monster_at(center: Vector2, alpha: float) -> void:
 		var dot_radius: float = monster_dot_sizes[dot_index]
 		
 		draw_circle(dot_position, dot_radius, color)
+
+func _draw_monster_ai_debug() -> void:
+	if monster_state != MonsterState.INVESTIGATING:
+		return
+	
+	var target_center: Vector2 = _cell_center(monster_investigation_target)
+	var marker_rect: Rect2 = Rect2(
+		target_center - Vector2(8.0, 8.0),
+		Vector2(16.0, 16.0)
+	)
+	
+	draw_rect(
+		marker_rect,
+		Color(1.0, 0.55, 0.1, 0.8),
+		false, 
+		2.0
+	)
 
 func _draw_debug_path() -> void:
 	var color: Color = Color(1.0, 0.85, 0.2, 0.8)
