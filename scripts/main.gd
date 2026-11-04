@@ -16,21 +16,27 @@ const PING_RING_COLOR: Color = Color(0.35, 1.0, 0.55, 1.0)
 const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
 const WALL_FLASH_DURATION: float = 1.2
 
+const MONSTER_COLOR: Color = Color(0.85, 0.12, 0.15, 1.0)
+const MONSTER_DOT_COUNT: int = 11
+const MONSTER_CLUSTER_RADIUS: float = TILE_SIZE * 0.38
+
+const DEBUG_SHOW_MONSTER: bool = true
+
 const MAP_ROWS: Array[String] = [
 	"####################",
-	"#E.................#",
+	"#..................#",
 	"#..###.............#",
 	"#..#......#........#",
 	"#..#......#........#",
 	"#..#..####.....#...#",
-	"#.......#.......#..#",
+	"#.......#....M..#..#",
 	"#.......#..........#",
 	"#..............#...#",
 	"#..######..........#",
 	"#..............#...#",
 	"#..........#.......#",
-	"#...........#......#",
-	"#..................#",
+	"#..........#.......#",
+	"#.E........#...M...#",
 	"####################"
 ]
 
@@ -66,6 +72,10 @@ var wall_cells: Array[Vector2i] = []
 var wall_last_lit: Dictionary = {}
 var last_ping_cell: Vector2i = Vector2i.ZERO
 var last_ping_time: float = -1000.0
+var monster_cell: Vector2i = Vector2i.ZERO
+var monster_draw_position: Vector2 = Vector2.ZERO
+var monster_dot_offsets: Array[Vector2] = []
+var monster_dot_sizes: Array[float] = []
 
 func _ready() -> void:
 	if not _parse_map():
@@ -74,6 +84,7 @@ func _ready() -> void:
 	
 	map_is_valid = true
 	player_draw_position = _cell_center(player_cell)
+	print("Monster spawn cell: ", monster_cell)
 	queue_redraw()
 
 func _parse_map() -> bool:
@@ -85,6 +96,7 @@ func _parse_map() -> bool:
 	map_width = MAP_ROWS[0].length()
 	
 	var start_count: int = 0
+	var monster_count: int = 0 
 	
 	for y in range(map_height):
 		var row: String = MAP_ROWS[y]
@@ -98,7 +110,10 @@ func _parse_map() -> bool:
 			
 			if tile == "E":
 				start_count += 1
-				player_cell = Vector2i(x, y)
+				player_cell = Vector2i(x, y)	
+			elif tile == "M":
+				monster_count += 1 
+				monster_cell = Vector2i(x, y)
 			elif tile == "#":
 				wall_cells.append(Vector2i(x, y))
 			elif tile != ".":
@@ -108,7 +123,11 @@ func _parse_map() -> bool:
 	if start_count != 1:
 		push_error("Expected exactly one E start marker but found %d!" % [start_count])
 		return false
+	if monster_count != 1:
+		push_error("Expected exactly one M monster marker but found %d!" % [monster_count])
+		return false
 	return true
+
 
 func _process(delta: float) -> void:
 	if not map_is_valid:
