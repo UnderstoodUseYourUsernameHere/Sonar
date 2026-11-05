@@ -16,6 +16,8 @@ const PING_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
 const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
 const WALL_FLASH_DURATION: float = 1.2
 
+const MONSTER_CATCH_DISTANCE: float = TILE_SIZE * 0.30
+
 const MONSTER_ROAM_WAIT: float = 0.75
 const MONSTER_ROAM_MIN_DISTANCE: int = 4
 const MONSTER_ROAM_ATTEMPTS: int = 40
@@ -83,6 +85,7 @@ var move_elapsed: float = 0.0
 var buffered_direction: Vector2i = Vector2i.ZERO
 
 var game_time: float = 0.0
+var game_over: bool = false
 var active_pulses: Array[SonarPulse] = []
 var wall_cells: Array[Vector2i] = []
 var walkable_cells: Array[Vector2i] = []
@@ -139,6 +142,52 @@ func _ready() -> void:
 	print("Offsets: ", monster_dot_offsets.size(), " | Sizes: ", monster_dot_sizes.size())
 	print("Debug path: ", monster_path)
 	queue_redraw()
+
+func _check_player_caught() -> void:
+	if game_over:
+		return
+	
+	var distance: float = player_draw_position.distance_to(monster_draw_position)
+	if distance > MONSTER_CATCH_DISTANCE:
+		return
+	
+	game_over = true
+	active_pulses.clear()
+	monster_path.clear()
+
+func _draw_game_over() -> void:
+	var screen_size: Vector2 = Vector2(
+		map_width * TILE_SIZE,
+		map_height * TILE_SIZE
+	)
+	
+	draw_rect(
+		Rect2(Vector2.ZERO, screen_size),
+		Color(0.2, 0.0, 0.0, 0.72),
+		true
+	)
+	
+	var font: Font = ThemeDB.fallback_font
+	
+	draw_string(
+		font,
+		Vector2(0.0, 330.0),
+		"SIGNAL LOST",
+		HORIZONTAL_ALIGNMENT_CENTER,
+		screen_size.x,
+		42,
+		Color(1.0, 0.25, 0.25, 1.0)
+	)
+	
+	draw_string(
+		font,
+		Vector2(0.0, 380.0),
+		"PRESS R TO RESTART",
+		HORIZONTAL_ALIGNMENT_CENTER,
+		screen_size.x,
+		20,
+		Color(1.0, 0.85, 0.85, 1.0)
+	)
 
 func _parse_map() -> bool:
 	if MAP_ROWS.is_empty():
@@ -354,6 +403,13 @@ func _process(delta: float) -> void:
 	if not map_is_valid:
 		return
 	
+	if game_over:
+		if Input.is_action_just_pressed("restart"):
+			get_tree().reload_current_scene()
+		
+		queue_redraw()
+		return
+	
 	game_time += delta
 	
 	if Input.is_action_just_pressed("ping"):
@@ -383,6 +439,7 @@ func _process(delta: float) -> void:
 	_update_pulses(delta)
 	_update_monster_movement(delta)
 	_update_monster_ai(delta)
+	_check_player_caught()
 	
 	queue_redraw()
 
@@ -574,6 +631,8 @@ func _draw() -> void:
 		_draw_monster_at(monster_draw_position, 1.0)
 	
 	_draw_player()
+	if game_over:
+		_draw_game_over()
 
 func _build_monster_shape() -> void:
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
