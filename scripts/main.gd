@@ -32,11 +32,15 @@ const MONSTER_DOT_COUNT: int = 11
 const MONSTER_CLUSTER_RADIUS: float = TILE_SIZE * 0.38
 const MONSTER_MOVE_TIME_PER_TILE: float = 0.22
 
+const CARD_COLOR: Color = Color(1.0, 0.82, 0.18, 1.0)
+const CARD_DIM_ALPHA: float = 0.30
+const CARD_FLASH_DURATION: float = 1.0
+
 const DEBUG_SHOW_MONSTER: bool = false
 
 const MAP_ROWS: Array[String] = [
 	"####################",
-	"#....E.............#",
+	"#...........K......#",
 	"#..###.............#",
 	"#..#......#........#",
 	"#..#......#........#",
@@ -47,7 +51,7 @@ const MAP_ROWS: Array[String] = [
 	"#..######..........#",
 	"#..............#...#",
 	"#..........#.......#",
-	"#..........#.......#",
+	"#..E.......#.......#",
 	"#..........#...M...#",
 	"####################"
 ]
@@ -119,6 +123,12 @@ var monster_hunt_wait_remaining: float = 0.0
 var monster_snapshot_position: Vector2 = Vector2.ZERO
 var monster_snapshot_time: float = -1000.0
 
+var card_cell: Vector2i = Vector2i.ZERO
+var card_draw_position: Vector2 = Vector2.ZERO
+var card_discovered: bool = false
+var card_last_lit_time: float = -1000.0
+var has_access_card: bool = false
+
 var astar: AStarGrid2D = AStarGrid2D.new() ## I really like this name for some reason!
 var monster_path: Array[Vector2i] = []
 
@@ -131,6 +141,8 @@ func _ready() -> void:
 	player_draw_position = _cell_center(player_cell)
 	monster_draw_position = _cell_center(monster_cell)
 	_build_monster_shape()
+	
+	card_draw_position = _cell_center(card_cell)
 	
 	_build_astar()
 	monster_rng.randomize()
@@ -201,6 +213,7 @@ func _parse_map() -> bool:
 	
 	var start_count: int = 0
 	var monster_count: int = 0 
+	var card_count: int = 0
 	
 	for y in range(map_height):
 		var row: String = MAP_ROWS[y]
@@ -218,6 +231,9 @@ func _parse_map() -> bool:
 			elif tile == "M":
 				monster_count += 1 
 				monster_cell = Vector2i(x, y)
+			elif tile == "K":
+				card_count += 1
+				card_cell = Vector2i(x, y)
 			elif tile == "#":
 				wall_cells.append(Vector2i(x, y))
 			elif tile != ".":
@@ -230,6 +246,9 @@ func _parse_map() -> bool:
 		return false
 	if monster_count != 1:
 		push_error("Expected exactly one M monster marker but found %d!" % [monster_count])
+		return false
+	if card_count != 1:
+		push_error("Expected exactly one K access card but found %d!" % [card_count])
 		return false
 	return true
 
@@ -439,6 +458,7 @@ func _process(delta: float) -> void:
 	_update_pulses(delta)
 	_update_monster_movement(delta)
 	_update_monster_ai(delta)
+	_check_card_collection()
 	_check_player_caught()
 	
 	queue_redraw()
@@ -559,6 +579,7 @@ func _update_pulses(delta: float) -> void:
 		pulse.radius = minf(pulse.radius + PING_SPEED * delta, PING_MAX_RADIUS)
 		_reveal_walls_for_pulse(pulse)
 		_reveal_monster_for_pulse(pulse)
+		_reveal_card_for_pulse(pulse)
 	
 	for i in range(active_pulses.size() - 1, -1, -1):
 		if active_pulses[i].radius >= PING_MAX_RADIUS:
@@ -587,6 +608,24 @@ func _reveal_walls_for_pulse(pulse: SonarPulse) -> void:
 			if _has_line_of_sight(pulse.origin_cell, cell):
 				wall_last_lit[cell] = game_time
 
+func _reveal_card_for_pulse(pulse: SonarPulse) -> void:
+	if has_access_card:
+		return
+	
+	var distance: float = pulse.origin.distance_to(card_draw_position)
+	var ring_reached_card: bool = (
+		distance > pulse.previous_radius
+		and distance <= pulse.radius
+	)
+	if not ring_reached_card:
+		return
+	
+	if not _has_line_of_sight(pulse.origin_cell, card_cell):
+		return
+	
+	card_discovered = true
+	card_last_lit_time = game_time
+
 func _reveal_monster_for_pulse(pulse: SonarPulse) -> void:
 	var distance: float = pulse.origin.distance_to(monster_draw_position)
 	var ring_reached_monster: bool = (
@@ -607,6 +646,19 @@ func _reveal_monster_for_pulse(pulse: SonarPulse) -> void:
 	monster_snapshot_position = monster_draw_position
 	monster_snapshot_time = game_time
 
+func _check_card_collection() -> void:
+	if has_access_card:
+		return
+	
+	if is_moving:
+		return
+	
+	if player_cell != card_cell:
+		return
+	
+	has_access_card = true
+	card_discovered = true
+
 func _draw() -> void:
 	if not map_is_valid:
 		return
@@ -623,6 +675,7 @@ func _draw() -> void:
 	)
 	_draw_revealed_walls()
 	_draw_pulses()
+	_draw_access_card()
 	_draw_monster_snapshot()
 	
 	if DEBUG_SHOW_MONSTER:
@@ -680,6 +733,49 @@ func _draw_revealed_walls() -> void:
 			)
 		)
 		draw_rect(wall_rect, color, false, 1.5)
+
+func _draw_access_card() -> void:
+	if has_access_card: 
+		return
+	
+	if not card_discovered:
+		return
+	
+	var seconds_since_lit: float = game_time - card_last_lit_time
+	
+	var flash: float = clampf(
+		1.0 - seconds_since_lit / CARD_FLASH_DURATION,
+		0.0,
+		1.0
+	)
+	
+	var alpha: float = lerpf(
+		CARD_DIM_ALPHA,
+		1.0,
+		flash
+	)
+	
+	var color: Color = Color(CARD_COLOR, alpha)
+	
+	var card_rect: Rect2 = Rect2(
+		card_draw_position - Vector2(12.0, 8.0),
+		Vector2(24.0, 16.0)
+	)
+	
+	draw_rect(card_rect, color, false, 2.0)
+	
+	draw_line(
+		card_draw_position + Vector2(-7.0, 3.0),
+		card_draw_position + Vector2(7.0, 3.0),
+		color,
+		2.0
+	)
+	
+	draw_circle(
+		card_draw_position + Vector2(-6.0, -3.0),
+		2.0,
+		color
+	)
 
 func _draw_pulses() -> void:
 	for pulse in active_pulses:
