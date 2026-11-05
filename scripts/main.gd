@@ -650,9 +650,6 @@ func _check_card_collection() -> void:
 	if has_access_card:
 		return
 	
-	if is_moving:
-		return
-	
 	if player_cell != card_cell:
 		return
 	
@@ -862,7 +859,7 @@ func _draw_monster_ai_debug() -> void:
 		Vector2(16.0, 16.0)
 	)
 	
-	draw_rect(marker_rect, Color(1.0, 0.55, 0.1, 0.8), false, 2.0)
+	draw_rect(marker_rect, marker_color, false, 2.0)
 
 func _draw_debug_path() -> void:
 	var color: Color = Color(1.0, 0.85, 0.2, 0.8)
