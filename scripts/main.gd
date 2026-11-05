@@ -12,6 +12,7 @@ const PING_MAX_RADIUS: float = 8.5 * TILE_SIZE
 const PING_COOLDOWN: float = 0.9
 const PING_RING_WIDTH: float = 1.0
 const PING_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
+const PING_NOISE_RANGE_TILES: float = 12.0 ## How far the monster can hear a ping, its larger than the radius on purpose
 
 const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
 const WALL_FLASH_DURATION: float = 1.2
@@ -42,7 +43,7 @@ const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
 const EXIT_DIM_ALPHA: float = 0.30
 const EXIT_FLASH_DURATION: float = 1.0
 
-const DEBUG_SHOW_MONSTER: bool = false
+const DEBUG_SHOW_MONSTER: bool = true
 
 const MAP_ROWS: Array[String] = [
 	"################################",
@@ -109,8 +110,12 @@ var active_pulses: Array[SonarPulse] = []
 var wall_cells: Array[Vector2i] = []
 var walkable_cells: Array[Vector2i] = []
 var wall_last_lit: Dictionary = {}
-var last_ping_cell: Vector2i = Vector2i.ZERO
+
 var last_ping_time: float = -1000.0
+
+var last_noise_cell: Vector2i = Vector2i.ZERO
+var last_noise_time: float = -1000.0
+var last_noise_range_tiles: float = 0.0
 
 var monster_cell: Vector2i = Vector2i.ZERO
 var monster_draw_position: Vector2 = Vector2.ZERO
@@ -128,7 +133,7 @@ var monster_rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var monster_roam_wait_remaining: float = 0.0
 
 var monster_state: MonsterState = MonsterState.ROAMING
-var monster_last_heard_ping_time: float = -1000.0
+var monster_last_heard_noise_time: float = -1000.0
 var monster_investigation_target: Vector2i = Vector2i.ZERO
 var monster_needs_new_path: bool = false
 
@@ -642,9 +647,21 @@ func _try_emit_ping() -> void:
 	
 	active_pulses.append(SonarPulse.new(origin, origin_cell))
 	
-	last_ping_cell = origin_cell
+	_make_noise(origin_cell, PING_NOISE_RANGE_TILES)
 	last_ping_time = game_time
 
+func _make_noise(cell: Vector2i, range_tiles: float) -> void:
+	if is_equal_approx(last_noise_time, game_time) and range_tiles < last_noise_range_tiles:
+		return
+	
+	last_noise_cell = cell
+	last_noise_time = game_time
+	last_noise_range_tiles = range_tiles
+
+func _monster_can_hear(cell: Vector2i, range_tiles: float) -> bool:
+	var distance: float = monster_draw_position.distance_to(_cell_center(cell))
+	return distance <= range_tiles * TILE_SIZE
+ 
 func _update_pulses(delta: float) -> void:
 	if active_pulses.is_empty():
 		return
@@ -662,9 +679,11 @@ func _update_pulses(delta: float) -> void:
 			active_pulses.remove_at(i)
 
 func _update_monster_ai(delta: float) -> void:
-	if last_ping_time > monster_last_heard_ping_time:
-		monster_last_heard_ping_time = last_ping_time
-		_begin_monster_investigation(last_ping_cell)
+	if last_noise_time > monster_last_heard_noise_time:
+		monster_last_heard_noise_time = last_noise_time
+		
+		if _monster_can_hear(last_noise_cell, last_noise_range_tiles):
+			_begin_monster_investigation(last_noise_cell)
 	
 	match monster_state:
 		MonsterState.ROAMING:
@@ -785,6 +804,7 @@ func _draw() -> void:
 	if DEBUG_SHOW_MONSTER:
 		_draw_debug_path()
 		_draw_monster_ai_debug()
+		draw_arc(monster_draw_position, PING_NOISE_RANGE_TILES * TILE_SIZE, 0.0, TAU, 64, Color(1.0, 0.3, 0.3, 0.15), 1.0, true)
 		_draw_monster_at(monster_draw_position, 0.35)
 	
 	_draw_player()
@@ -910,12 +930,12 @@ func _draw_exit_marker() -> void:
 	var color: Color = Color(base_color, alpha)
 	
 	var door_rect: Rect2 = Rect2(
-		exit_draw_position - Vector2(14.0, 18.0),
-		Vector2(28.0, 36.0)
+		exit_draw_position - Vector2(8.0, 11.0),
+		Vector2(16.0, 22.0)
 	)
 	
 	draw_rect(door_rect, color, false, 2.0)
-	draw_circle(exit_draw_position + Vector2(7.0, 0.0), 2.0, color)
+	draw_circle(exit_draw_position + Vector2(4.0, 0.0), 2.0, color)
 
 func _draw_pulses() -> void:
 	for pulse in active_pulses:
