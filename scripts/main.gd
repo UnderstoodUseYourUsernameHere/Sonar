@@ -9,10 +9,13 @@ const PLAYER_COLOR: Color = Color(0.96, 0.98, 1.0, 1.0)
 
 const PING_SPEED: float = 320.0 ## This is how fast the ring/circle grows 
 const PING_MAX_RADIUS: float = 8.5 * TILE_SIZE
-const PING_COOLDOWN: float = 0.9
+const PING_COOLDOWN: float = 0.6
 const PING_RING_WIDTH: float = 1.0
 const PING_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
 const PING_NOISE_RANGE_TILES: float = 12.0 ## How far the monster can hear a ping, its larger than the radius on purpose
+
+const FOOTSTEP_NOISE_RANGE_TILES: float = 3.5
+const FOOTSTEP_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
 
 const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
 const WALL_FLASH_DURATION: float = 1.2
@@ -22,6 +25,10 @@ const MONSTER_CATCH_DISTANCE: float = TILE_SIZE * 0.30
 const MONSTER_ROAM_WAIT: float = 0.75
 const MONSTER_ROAM_MIN_DISTANCE: int = 8
 const MONSTER_ROAM_ATTEMPTS: int = 40
+
+const MONSTER_ROAM_MOVE_TIME: float = 0.26
+const MONSTER_INVESTIGATE_MOVE_TIME: float = 0.12
+const MONSTER_HUNT_MOVE_TIME: float = 0.20
 
 const MONSTER_HUNT_DURATION: float = 4.5 
 const MONSTER_HUNT_RADIUS: int = 3
@@ -128,6 +135,7 @@ var monster_move_source: Vector2 = Vector2.ZERO
 var monster_move_destination: Vector2 = Vector2.ZERO
 var monster_move_destination_cell: Vector2i = Vector2i.ZERO
 var monster_move_elapsed: float = 0.0
+var monster_current_move_time: float = MONSTER_ROAM_MOVE_TIME
 
 var monster_rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var monster_roam_wait_remaining: float = 0.0
@@ -348,6 +356,15 @@ func _set_monster_path(target_cell: Vector2i) -> void:
 	if not monster_path.is_empty() and monster_path[0] == monster_cell:
 		monster_path.pop_front()
 
+func _monster_move_time_for_state() -> float:
+	match monster_state:
+		MonsterState.INVESTIGATING:
+			return MONSTER_INVESTIGATE_MOVE_TIME
+		MonsterState.HUNTING:
+			return MONSTER_HUNT_MOVE_TIME
+		_:
+			return MONSTER_ROAM_MOVE_TIME
+
 func _pick_roam_target() -> Vector2i:
 	if walkable_cells.is_empty():
 		return monster_cell
@@ -371,7 +388,7 @@ func _update_monster_movement(delta: float) -> void:
 		monster_move_elapsed += delta
 		
 		var progress: float = minf(
-			monster_move_elapsed / MONSTER_MOVE_TIME_PER_TILE,
+			monster_move_elapsed / monster_current_move_time,
 			1.0
 		)
 		
@@ -390,6 +407,7 @@ func _update_monster_movement(delta: float) -> void:
 		monster_move_source = monster_draw_position
 		monster_move_destination = _cell_center(monster_move_destination_cell)
 		monster_move_elapsed = 0.0
+		monster_current_move_time = _monster_move_time_for_state()
 		is_monster_moving = true
 		
 
@@ -528,6 +546,7 @@ func _process(delta: float) -> void:
 			player_cell = move_destination_cell
 			player_draw_position = move_destination
 			is_moving = false
+			_make_noise(player_cell, FOOTSTEP_NOISE_RANGE_TILES)
 	
 	if not is_moving and buffered_direction != Vector2i.ZERO:
 		var next_direction: Vector2i = buffered_direction
@@ -807,6 +826,7 @@ func _draw() -> void:
 		draw_arc(monster_draw_position, PING_NOISE_RANGE_TILES * TILE_SIZE, 0.0, TAU, 64, Color(1.0, 0.3, 0.3, 0.15), 1.0, true)
 		_draw_monster_at(monster_draw_position, 0.35)
 	
+	_draw_footsteps_ring()
 	_draw_player()
 	_draw_hud()
 	
@@ -977,6 +997,21 @@ func _draw_player() -> void:
 	])
 	
 	draw_colored_polygon(triangle, PLAYER_COLOR)
+
+func _draw_footsteps_ring() -> void:
+	if not is_moving:
+		return
+	
+	draw_arc(
+		player_draw_position,
+		FOOTSTEP_NOISE_RANGE_TILES * TILE_SIZE,
+		0.0,
+		TAU,
+		48,
+		FOOTSTEP_RING_COLOR,
+		1.0,
+		true
+	)
 
 func _draw_monster_at(center: Vector2, alpha: float) -> void:
 	var color: Color = Color(MONSTER_COLOR, alpha)
