@@ -28,11 +28,11 @@ const MONSTER_ROAM_ATTEMPTS: int = 40
 
 const MONSTER_ROAM_MOVE_TIME: float = 0.26
 const MONSTER_INVESTIGATE_MOVE_TIME: float = 0.12
-const MONSTER_HUNT_MOVE_TIME: float = 0.20
+const MONSTER_SEARCH_MOVE_TIME: float = 0.20
 
-const MONSTER_HUNT_DURATION: float = 4.5 
-const MONSTER_HUNT_RADIUS: int = 3
-const MONSTER_HUNT_WAIT: float = 0.25
+const MONSTER_SEARCH_DURATION: float = 4.5 
+const MONSTER_SEARCH_RADIUS: int = 3
+const MONSTER_SEARCH_WAIT: float = 0.25
 const MONSTER_SNAPSHOT_FADE_DURATION: float = 1.5
 
 const MONSTER_COLOR: Color = Color(0.85, 0.12, 0.15, 1.0)
@@ -50,7 +50,7 @@ const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
 const EXIT_DIM_ALPHA: float = 0.30
 const EXIT_FLASH_DURATION: float = 1.0
 
-const DEBUG_SHOW_MONSTER: bool = true
+const DEBUG_SHOW_MONSTER: bool = false
 
 const MAP_ROWS: Array[String] = [
 	"################################",
@@ -92,7 +92,7 @@ class SonarPulse:
 enum MonsterState {
 	ROAMING,
 	INVESTIGATING,
-	HUNTING
+	SEARCHING
 }
 
 var map_width: int = 0
@@ -145,9 +145,9 @@ var monster_last_heard_noise_time: float = -1000.0
 var monster_investigation_target: Vector2i = Vector2i.ZERO
 var monster_needs_new_path: bool = false
 
-var monster_hunt_center: Vector2i = Vector2i.ZERO
-var monster_hunt_time_remaining: float = 0.0
-var monster_hunt_wait_remaining: float = 0.0 
+var monster_search_center: Vector2i = Vector2i.ZERO
+var monster_search_time_remaining: float = 0.0
+var monster_search_wait_remaining: float = 0.0 
 var monster_snapshot_position: Vector2 = Vector2.ZERO
 var monster_snapshot_time: float = -1000.0
 
@@ -360,8 +360,8 @@ func _monster_move_time_for_state() -> float:
 	match monster_state:
 		MonsterState.INVESTIGATING:
 			return MONSTER_INVESTIGATE_MOVE_TIME
-		MonsterState.HUNTING:
-			return MONSTER_HUNT_MOVE_TIME
+		MonsterState.SEARCHING:
+			return MONSTER_SEARCH_MOVE_TIME
 		_:
 			return MONSTER_ROAM_MOVE_TIME
 
@@ -438,29 +438,29 @@ func _begin_monster_investigation(target_cell: Vector2i) -> void:
 	monster_roam_wait_remaining = 0
 	
 
-func _begin_monster_hunt(center_cell: Vector2i) -> void:
-	monster_state = MonsterState.HUNTING
-	monster_hunt_center = center_cell 
-	monster_hunt_time_remaining = MONSTER_HUNT_DURATION
-	monster_hunt_wait_remaining = 0.0
+func _begin_monster_search(center_cell: Vector2i) -> void:
+	monster_state = MonsterState.SEARCHING
+	monster_search_center = center_cell 
+	monster_search_time_remaining = MONSTER_SEARCH_DURATION
+	monster_search_wait_remaining = 0.0
 	monster_path.clear()
 
-func _pick_monster_hunt_target() -> Vector2i:
+func _pick_monster_search_target() -> Vector2i:
 	var candidates: Array[Vector2i] = []
 	
 	for cell in walkable_cells:
 		var distance: int = (
-			absi(cell.x - monster_hunt_center.x) + absi(cell.y - monster_hunt_center.y)
+			absi(cell.x - monster_search_center.x) + absi(cell.y - monster_search_center.y)
 		)
 		
 		if (
 			distance > 0 
-			and distance <= MONSTER_HUNT_RADIUS
+			and distance <= MONSTER_SEARCH_RADIUS
 			and cell != monster_cell
 		):
 			candidates.append(cell)
 	if candidates.is_empty():
-		return monster_hunt_center
+		return monster_search_center
 	
 	var random_index: int = monster_rng.randi_range(0, candidates.size() - 1)
 	
@@ -476,7 +476,7 @@ func _update_monster_investigating() -> void:
 	
 	if monster_path.is_empty():
 		if monster_cell == monster_investigation_target:
-			_begin_monster_hunt(monster_investigation_target)
+			_begin_monster_search(monster_investigation_target)
 		else:
 			push_warning("Monster couldnt reach ping location?!")
 			monster_state = MonsterState.ROAMING
@@ -485,10 +485,10 @@ func _update_monster_investigating() -> void:
 		return
 
 
-func _update_monster_hunting(delta: float) -> void:
-	monster_hunt_time_remaining -= delta
+func _update_monster_searching(delta: float) -> void:
+	monster_search_time_remaining -= delta
 	
-	if monster_hunt_time_remaining <= 0.0:
+	if monster_search_time_remaining <= 0.0:
 		monster_path.clear()
 		
 		if not is_monster_moving:
@@ -503,17 +503,17 @@ func _update_monster_hunting(delta: float) -> void:
 	if not monster_path.is_empty():
 		return
 	
-	monster_hunt_wait_remaining -= delta
+	monster_search_wait_remaining -= delta
 	
-	if monster_hunt_wait_remaining > 0.0:
+	if monster_search_wait_remaining > 0.0:
 		return
 	
-	var target_cell: Vector2i = _pick_monster_hunt_target()
+	var target_cell: Vector2i = _pick_monster_search_target()
 	
 	if target_cell != monster_cell:
 		_set_monster_path(target_cell)
 	
-	monster_hunt_wait_remaining = MONSTER_HUNT_WAIT
+	monster_search_wait_remaining = MONSTER_SEARCH_WAIT
 
 func _process(delta: float) -> void:
 	if not map_is_valid:
@@ -711,8 +711,8 @@ func _update_monster_ai(delta: float) -> void:
 		MonsterState.INVESTIGATING:
 			_update_monster_investigating()
 		
-		MonsterState.HUNTING:
-			_update_monster_hunting(delta)
+		MonsterState.SEARCHING:
+			_update_monster_searching(delta)
 
 func _reveal_walls_for_pulse(pulse: SonarPulse) -> void:
 	for cell in wall_cells:
@@ -1046,8 +1046,8 @@ func _draw_monster_ai_debug() -> void:
 	if monster_state == MonsterState.INVESTIGATING:
 		target_center = _cell_center(monster_investigation_target)
 		marker_color = Color(1.0, 0.55, 0.1, 0.9)
-	elif monster_state == MonsterState.HUNTING:
-		target_center = _cell_center(monster_hunt_center)
+	elif monster_state == MonsterState.SEARCHING:
+		target_center = _cell_center(monster_search_center)
 		marker_color = Color(0.7, 0.2, 1.0, 0.9)
 	else:
 		return
