@@ -779,6 +779,7 @@ func _draw() -> void:
 		_draw_monster_at(monster_draw_position, 0.35)
 	
 	_draw_player()
+	_draw_hud()
 	
 	if game_over:
 		_draw_game_over()
@@ -1000,3 +1001,53 @@ func _draw_debug_path() -> void:
 	for cell in monster_path:
 		var center: Vector2 = _cell_center(cell)
 		draw_circle(center, 3.0, color)
+
+func _draw_hud() -> void:
+	var font: Font = ThemeDB.fallback_font
+	var objective_text: String
+	
+	if has_access_card:
+		objective_text = "OBJECTIVE: FIND THE EXIT"
+	else:
+		objective_text = "OBJECTIVE: FIND THE ACCESS CARD"
+	
+	draw_string(
+		font,
+		Vector2(18.0, 28.0),
+		objective_text,
+		HORIZONTAL_ALIGNMENT_LEFT,
+		500.0,
+		16,
+		Color(0.75, 1.0, 0.82, 0.9)
+	)
+	
+	_draw_ping_cooldown()
+
+func _draw_ping_cooldown() -> void:
+	var bar_position: Vector2 = Vector2(18.0, 42.0)
+	var bar_size: Vector2 = Vector2(140.0, 8.0)
+	
+	var cooldown_progress: float = clampf(
+		(game_time - last_ping_time) / PING_COOLDOWN,
+		0.0,
+		1.0
+	)
+	
+	draw_rect(
+		Rect2(bar_position, bar_size),
+		Color(0.1, 0.25, 0.14, 0.8),
+		true
+	)
+	
+	draw_rect(
+		Rect2(bar_position, Vector2(bar_size.x * cooldown_progress, bar_size.y)),
+		PING_RING_COLOR,
+		true
+	)
+	
+	draw_rect(
+		Rect2(bar_position, bar_size),
+		Color(0.45, 1.0, 0.6, 0.8),
+		false,
+		1.0
+	)
