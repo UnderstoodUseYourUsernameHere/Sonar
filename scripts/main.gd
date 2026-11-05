@@ -36,6 +36,11 @@ const CARD_COLOR: Color = Color(1.0, 0.82, 0.18, 1.0)
 const CARD_DIM_ALPHA: float = 0.30
 const CARD_FLASH_DURATION: float = 1.0
 
+const EXIT_LOCKED_COLOR: Color = Color(0.25, 0.55, 1.0, 1.0)
+const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
+const EXIT_DIM_ALPHA: float = 0.30
+const EXIT_FLASH_DURATION: float = 1.0
+
 const DEBUG_SHOW_MONSTER: bool = false
 
 const MAP_ROWS: Array[String] = [
@@ -44,9 +49,9 @@ const MAP_ROWS: Array[String] = [
 	"#..###.............#",
 	"#..#......#........#",
 	"#..#......#........#",
-	"#..#..####.....#...#",
+	"##########.....#...#",
 	"#.......#.......#..#",
-	"#.......#..........#",
+	"#X......#..........#",
 	"#..............#...#",
 	"#..######..........#",
 	"#..............#...#",
@@ -129,6 +134,12 @@ var card_discovered: bool = false
 var card_last_lit_time: float = -1000.0
 var has_access_card: bool = false
 
+var exit_cell: Vector2i = Vector2i.ZERO
+var exit_draw_position: Vector2 = Vector2.ZERO
+var exit_discovered: bool = false
+var exit_last_lit_time: float = -1000.0
+var has_won: bool = false
+
 var astar: AStarGrid2D = AStarGrid2D.new() ## I really like this name for some reason!
 var monster_path: Array[Vector2i] = []
 
@@ -143,6 +154,7 @@ func _ready() -> void:
 	_build_monster_shape()
 	
 	card_draw_position = _cell_center(card_cell)
+	exit_draw_position = _cell_center(exit_cell)
 	
 	_build_astar()
 	monster_rng.randomize()
@@ -201,6 +213,50 @@ func _draw_game_over() -> void:
 		Color(1.0, 0.85, 0.85, 1.0)
 	)
 
+func _draw_victory() -> void:
+	var screen_size: Vector2 = Vector2(
+		map_width * TILE_SIZE,
+		map_height * TILE_SIZE
+	)
+	
+	draw_rect(
+		Rect2(Vector2.ZERO, screen_size),
+		Color(0.0, 0.16, 0.08, 0.78),
+		true
+	)
+	
+	var font: Font = ThemeDB.fallback_font
+	
+	draw_string(
+		font,
+		Vector2(0.0, 320.0),
+		"ACCESS GRANTED",
+		HORIZONTAL_ALIGNMENT_CENTER,
+		screen_size.x,
+		42,
+		Color(0.3, 1.0, 0.55, 1.0)
+	)
+	
+	draw_string(
+		font,
+		Vector2(0.0, 365.0),
+		"YOU HAVE ESCAPED THE STATION!",
+		HORIZONTAL_ALIGNMENT_CENTER,
+		screen_size.x,
+		22,
+		Color(0.75, 1.0, 0.82, 1.0)
+	)
+	
+	draw_string(
+		font,
+		Vector2(0.0, 405.0),
+		"PRESS R TO PLAY AGAIN",
+		HORIZONTAL_ALIGNMENT_CENTER,
+		screen_size.x,
+		18,
+		Color(0.75, 1.0, 0.82, 1.0)
+	)
+
 func _parse_map() -> bool:
 	if MAP_ROWS.is_empty():
 		push_error("MAP_ROWS cant be empty!")
@@ -214,6 +270,7 @@ func _parse_map() -> bool:
 	var start_count: int = 0
 	var monster_count: int = 0 
 	var card_count: int = 0
+	var exit_count: int = 0
 	
 	for y in range(map_height):
 		var row: String = MAP_ROWS[y]
@@ -227,13 +284,16 @@ func _parse_map() -> bool:
 			
 			if tile == "E":
 				start_count += 1
-				player_cell = Vector2i(x, y)	
+				player_cell = Vector2i(x, y)
 			elif tile == "M":
 				monster_count += 1 
 				monster_cell = Vector2i(x, y)
 			elif tile == "K":
 				card_count += 1
 				card_cell = Vector2i(x, y)
+			elif tile == "X":
+				exit_count += 1
+				exit_cell = Vector2i(x, y)
 			elif tile == "#":
 				wall_cells.append(Vector2i(x, y))
 			elif tile != ".":
@@ -249,6 +309,9 @@ func _parse_map() -> bool:
 		return false
 	if card_count != 1:
 		push_error("Expected exactly one K access card but found %d!" % [card_count])
+		return false
+	if exit_count != 1:
+		push_error("Expected exactly one X exit marker but found %d!" % [exit_count])
 		return false
 	return true
 
@@ -422,7 +485,7 @@ func _process(delta: float) -> void:
 	if not map_is_valid:
 		return
 	
-	if game_over:
+	if game_over or has_won:
 		if Input.is_action_just_pressed("restart"):
 			get_tree().reload_current_scene()
 		
@@ -460,6 +523,7 @@ func _process(delta: float) -> void:
 	_update_monster_ai(delta)
 	_check_card_collection()
 	_check_player_caught()
+	_check_for_victory()
 	
 	queue_redraw()
 
@@ -580,6 +644,7 @@ func _update_pulses(delta: float) -> void:
 		_reveal_walls_for_pulse(pulse)
 		_reveal_monster_for_pulse(pulse)
 		_reveal_card_for_pulse(pulse)
+		_reveal_exit_for_pulse(pulse)
 	
 	for i in range(active_pulses.size() - 1, -1, -1):
 		if active_pulses[i].radius >= PING_MAX_RADIUS:
@@ -626,6 +691,21 @@ func _reveal_card_for_pulse(pulse: SonarPulse) -> void:
 	card_discovered = true
 	card_last_lit_time = game_time
 
+func _reveal_exit_for_pulse(pulse: SonarPulse) -> void:
+	var distance: float = pulse.origin.distance_to(exit_draw_position)
+	var ring_reached_exit: bool = (
+		distance > pulse.previous_radius
+		and distance <= pulse.radius
+	)
+	if not ring_reached_exit:
+		return
+	
+	if not _has_line_of_sight(pulse.origin_cell, exit_cell):
+		return
+	
+	exit_discovered = true
+	exit_last_lit_time = game_time
+ 
 func _reveal_monster_for_pulse(pulse: SonarPulse) -> void:
 	var distance: float = pulse.origin.distance_to(monster_draw_position)
 	var ring_reached_monster: bool = (
@@ -656,6 +736,20 @@ func _check_card_collection() -> void:
 	has_access_card = true
 	card_discovered = true
 
+func _check_for_victory() -> void:
+	if has_won or game_over:
+		return
+	
+	if not has_access_card:
+		return
+	
+	if player_cell != exit_cell:
+		return
+	
+	has_won = true
+	active_pulses.clear()
+	monster_path.clear()
+
 func _draw() -> void:
 	if not map_is_valid:
 		return
@@ -673,16 +767,20 @@ func _draw() -> void:
 	_draw_revealed_walls()
 	_draw_pulses()
 	_draw_access_card()
+	_draw_exit_marker()
 	_draw_monster_snapshot()
 	
 	if DEBUG_SHOW_MONSTER:
 		_draw_debug_path()
 		_draw_monster_ai_debug()
-		_draw_monster_at(monster_draw_position, 1.0)
+		_draw_monster_at(monster_draw_position, 0.35)
 	
 	_draw_player()
+	
 	if game_over:
 		_draw_game_over()
+	elif has_won:
+		_draw_victory()
 
 func _build_monster_shape() -> void:
 	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
@@ -773,6 +871,36 @@ func _draw_access_card() -> void:
 		2.0,
 		color
 	)
+
+func _draw_exit_marker() -> void:
+	if not exit_discovered:
+		return
+	
+	var seconds_since_lit: float = game_time - exit_last_lit_time
+	
+	var flash: float = clampf(
+		1.0 - seconds_since_lit / EXIT_FLASH_DURATION,
+		0.0,
+		1.0
+	)
+	
+	var alpha: float = lerpf(EXIT_DIM_ALPHA, 1.0, flash)
+	
+	var base_color: Color
+	if has_access_card: 
+		base_color = EXIT_OPEN_COLOR
+	else:
+		base_color = EXIT_LOCKED_COLOR
+	
+	var color: Color = Color(base_color, alpha)
+	
+	var door_rect: Rect2 = Rect2(
+		exit_draw_position - Vector2(14.0, 18.0),
+		Vector2(28.0, 36.0)
+	)
+	
+	draw_rect(door_rect, color, false, 2.0)
+	draw_circle(exit_draw_position + Vector2(7.0, 0.0), 2.0, color)
 
 func _draw_pulses() -> void:
 	for pulse in active_pulses:
