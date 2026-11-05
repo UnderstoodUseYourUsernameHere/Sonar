@@ -1,16 +1,16 @@
 extends Node2D
 
-const TILE_SIZE: int = 48
+const TILE_SIZE: int = 30
 const MOVE_TIME_PER_TILE: float = 0.16
 
 const BACKGROUND_COLOR: Color = Color(0.0, 0.0, 0.0, 1.0)
 const WALL_COLOR: Color = Color(0.12, 0.90, 0.38, 1.0)
 const PLAYER_COLOR: Color = Color(0.96, 0.98, 1.0, 1.0)
 
-const PING_SPEED: float = 420.0 ## This is how fast the ring/circle grows 
+const PING_SPEED: float = 320.0 ## This is how fast the ring/circle grows 
 const PING_MAX_RADIUS: float = 8.5 * TILE_SIZE
-const PING_COOLDOWN: float = 0.4
-const PING_RING_WIDTH: float = 2.0
+const PING_COOLDOWN: float = 0.9
+const PING_RING_WIDTH: float = 1.0
 const PING_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
 
 const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
@@ -19,7 +19,7 @@ const WALL_FLASH_DURATION: float = 1.2
 const MONSTER_CATCH_DISTANCE: float = TILE_SIZE * 0.30
 
 const MONSTER_ROAM_WAIT: float = 0.75
-const MONSTER_ROAM_MIN_DISTANCE: int = 4
+const MONSTER_ROAM_MIN_DISTANCE: int = 8
 const MONSTER_ROAM_ATTEMPTS: int = 40
 
 const MONSTER_HUNT_DURATION: float = 4.5 
@@ -45,21 +45,30 @@ const EXIT_FLASH_DURATION: float = 1.0
 const DEBUG_SHOW_MONSTER: bool = false
 
 const MAP_ROWS: Array[String] = [
-	"####################",
-	"#...........K......#",
-	"#..###.............#",
-	"#..#......#........#",
-	"#..#......#........#",
-	"##########.....#...#",
-	"#.......#.......#..#",
-	"#X......#..........#",
-	"#..............#...#",
-	"#..######..........#",
-	"#..............#...#",
-	"#..........#.......#",
-	"#..E.......#.......#",
-	"#..........#...M...#",
-	"####################"
+	"################################",
+	"#......#..........#............#",
+	"#......#..........#............#",
+	"#..E...........................#",
+	"#......#..........#............#",
+	"####.####..####...########.#####",
+	"#......#...####...#............#",
+	"#......#...####...#............#",
+	"#......#...####...#............#",
+	"#......#..........#.....X......#",
+	"##.#####..####....####.#########",
+	"#......#..####....#............#",
+	"#......#..####....#............#",
+	"#......#..####....#............#",
+	"#......#..........#............#",
+	"####.####.....#####.############",
+	"#......#......#....#...........#",
+	"#......#......#....#...........#",
+	"#......#......#................#",
+	"#......#......#....#.....K.....#",
+	"#..............#...#...........#",
+	"#......####.####...#...........#",
+	"#......................M.......#",
+	"################################"
 ]
 
 class SonarPulse:
