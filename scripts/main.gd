@@ -29,6 +29,7 @@ const MONSTER_SNAPSHOT_FADE_DURATION: float = 1.5
 
 const MONSTER_COLOR: Color = Color(0.85, 0.12, 0.15, 1.0)
 const MONSTER_DOT_COUNT: int = 11
+const MONSTER_DOT_COUNT_VARIANCE: int = 3
 const MONSTER_CLUSTER_RADIUS: float = TILE_SIZE * 0.38
 const MONSTER_MOVE_TIME_PER_TILE: float = 0.22
 
@@ -149,15 +150,16 @@ func _ready() -> void:
 		return
 	
 	map_is_valid = true
+	monster_rng.randomize()
+	 
 	player_draw_position = _cell_center(player_cell)
 	monster_draw_position = _cell_center(monster_cell)
-	_build_monster_shape()
-	
 	card_draw_position = _cell_center(card_cell)
 	exit_draw_position = _cell_center(exit_cell)
 	
+	_build_monster_shape()
 	_build_astar()
-	monster_rng.randomize()
+	
 	monster_path.clear()
 	monster_roam_wait_remaining = 0.5
 	
@@ -723,6 +725,7 @@ func _reveal_monster_for_pulse(pulse: SonarPulse) -> void:
 	):
 		return
 	
+	_build_monster_shape()
 	monster_snapshot_position = monster_draw_position
 	monster_snapshot_time = game_time
 
@@ -783,18 +786,20 @@ func _draw() -> void:
 		_draw_victory()
 
 func _build_monster_shape() -> void:
-	var rng: RandomNumberGenerator = RandomNumberGenerator.new()
-	rng.seed = 1337
-	
 	monster_dot_offsets.clear()
 	monster_dot_sizes.clear()
 	
-	for _dot_index in range(MONSTER_DOT_COUNT):
-		var angle: float = rng.randf_range(0.0, TAU)
-		var distance: float = rng.randf_range(0.0, MONSTER_CLUSTER_RADIUS)
+	var dot_count: int = MONSTER_DOT_COUNT + monster_rng.randi_range(
+		-MONSTER_DOT_COUNT_VARIANCE,
+		MONSTER_DOT_COUNT_VARIANCE
+	)
+	
+	for _dot_index in range(dot_count):
+		var angle: float = monster_rng.randf_range(0.0, TAU)
+		var distance: float = monster_rng.randf_range(0.0, MONSTER_CLUSTER_RADIUS)
 		
 		var dot_offset: Vector2 = Vector2.from_angle(angle) * distance
-		var dot_radius: float = rng.randf_range(1.5, 4.0)
+		var dot_radius: float = monster_rng.randf_range(1.5, 4.0)
 		
 		monster_dot_offsets.append(dot_offset)
 		monster_dot_sizes.append(dot_radius)
