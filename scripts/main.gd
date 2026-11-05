@@ -23,17 +23,18 @@ const MONSTER_ROAM_ATTEMPTS: int = 40
 const MONSTER_HUNT_DURATION: float = 4.5 
 const MONSTER_HUNT_RADIUS: int = 3
 const MONSTER_HUNT_WAIT: float = 0.25
+const MONSTER_SNAPSHOT_FADE_DURATION: float = 1.5
 
 const MONSTER_COLOR: Color = Color(0.85, 0.12, 0.15, 1.0)
 const MONSTER_DOT_COUNT: int = 11
 const MONSTER_CLUSTER_RADIUS: float = TILE_SIZE * 0.38
 const MONSTER_MOVE_TIME_PER_TILE: float = 0.22
 
-const DEBUG_SHOW_MONSTER: bool = true
+const DEBUG_SHOW_MONSTER: bool = false
 
 const MAP_ROWS: Array[String] = [
 	"####################",
-	"#..................#",
+	"#....E.............#",
 	"#..###.............#",
 	"#..#......#........#",
 	"#..#......#........#",
@@ -45,7 +46,7 @@ const MAP_ROWS: Array[String] = [
 	"#..............#...#",
 	"#..........#.......#",
 	"#..........#.......#",
-	"#.E........#...M...#",
+	"#..........#...M...#",
 	"####################"
 ]
 
@@ -112,6 +113,8 @@ var monster_needs_new_path: bool = false
 var monster_hunt_center: Vector2i = Vector2i.ZERO
 var monster_hunt_time_remaining: float = 0.0
 var monster_hunt_wait_remaining: float = 0.0 
+var monster_snapshot_position: Vector2 = Vector2.ZERO
+var monster_snapshot_time: float = -1000.0
 
 var astar: AStarGrid2D = AStarGrid2D.new() ## I really like this name for some reason!
 var monster_path: Array[Vector2i] = []
@@ -171,7 +174,7 @@ func _parse_map() -> bool:
 			elif tile != ".":
 				push_error("Unsupported map character '%s' at cell (%d, %d)!" % [tile, x, y])
 				return false
-			elif tile != "#":
+			if tile != "#":
 				walkable_cells.append(Vector2i(x, y))
 	if start_count != 1:
 		push_error("Expected exactly one E start marker but found %d!" % [start_count])
@@ -315,9 +318,7 @@ func _update_monster_investigating() -> void:
 			monster_roam_wait_remaining = MONSTER_ROAM_WAIT
 	
 		return
-	
-	if monster_path.is_empty():
-		_begin_monster_investigation(monster_investigation_target)
+
 
 func _update_monster_hunting(delta: float) -> void:
 	monster_hunt_time_remaining -= delta
@@ -500,6 +501,7 @@ func _update_pulses(delta: float) -> void:
 		pulse.previous_radius = pulse.radius
 		pulse.radius = minf(pulse.radius + PING_SPEED * delta, PING_MAX_RADIUS)
 		_reveal_walls_for_pulse(pulse)
+		_reveal_monster_for_pulse(pulse)
 	
 	for i in range(active_pulses.size() - 1, -1, -1):
 		if active_pulses[i].radius >= PING_MAX_RADIUS:
@@ -528,6 +530,26 @@ func _reveal_walls_for_pulse(pulse: SonarPulse) -> void:
 			if _has_line_of_sight(pulse.origin_cell, cell):
 				wall_last_lit[cell] = game_time
 
+func _reveal_monster_for_pulse(pulse: SonarPulse) -> void:
+	var distance: float = pulse.origin.distance_to(monster_draw_position)
+	var ring_reached_monster: bool = (
+		distance > pulse.previous_radius
+		and distance <= pulse.radius
+	)
+	if not ring_reached_monster:
+		return
+	
+	var current_monster_cell: Vector2i = _cell_from_position(monster_draw_position)
+	
+	if not _has_line_of_sight(
+		pulse.origin_cell,
+		current_monster_cell
+	):
+		return
+	
+	monster_snapshot_position = monster_draw_position
+	monster_snapshot_time = game_time
+
 func _draw() -> void:
 	if not map_is_valid:
 		return
@@ -544,6 +566,7 @@ func _draw() -> void:
 	)
 	_draw_revealed_walls()
 	_draw_pulses()
+	_draw_monster_snapshot()
 	
 	if DEBUG_SHOW_MONSTER:
 		_draw_debug_path()
@@ -649,6 +672,23 @@ func _draw_monster_at(center: Vector2, alpha: float) -> void:
 		
 		draw_circle(dot_position, dot_radius, color)
 
+func _draw_monster_snapshot() -> void:
+	var snapshot_age: float = game_time - monster_snapshot_time
+	
+	if snapshot_age < 0.0:
+		return
+	
+	if snapshot_age > MONSTER_SNAPSHOT_FADE_DURATION:
+		return
+	
+	var alpha: float = clampf(
+		1.0 - snapshot_age / MONSTER_SNAPSHOT_FADE_DURATION,
+		0.0,
+		1.0
+	)
+	
+	_draw_monster_at(monster_snapshot_position, alpha)
+
 func _draw_monster_ai_debug() -> void:
 	var target_center: Vector2
 	var marker_color: Color
@@ -667,12 +707,7 @@ func _draw_monster_ai_debug() -> void:
 		Vector2(16.0, 16.0)
 	)
 	
-	draw_rect(
-		marker_rect,
-		Color(1.0, 0.55, 0.1, 0.8),
-		false, 
-		2.0
-	)
+	draw_rect(marker_rect, Color(1.0, 0.55, 0.1, 0.8), false, 2.0)
 
 func _draw_debug_path() -> void:
 	var color: Color = Color(1.0, 0.85, 0.2, 0.8)
