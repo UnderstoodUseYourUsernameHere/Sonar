@@ -3,6 +3,13 @@ extends Node2D
 const TILE_SIZE: int = 30
 const MOVE_TIME_PER_TILE: float = 0.16
 
+const MOVE_ACTIONS: Dictionary = {
+	"move_up": Vector2i(0, -1),
+	"move_down": Vector2i(0, 1),
+	"move_left": Vector2i(-1, 0),
+	"move_right": Vector2i(1, 0)
+}
+
 const BACKGROUND_COLOR: Color = Color(0.0, 0.0, 0.0, 1.0)
 const WALL_COLOR: Color = Color(0.12, 0.90, 0.38, 1.0)
 const PLAYER_COLOR: Color = Color(0.96, 0.98, 1.0, 1.0)
@@ -131,6 +138,8 @@ var move_destination_cell: Vector2i = Vector2i.ZERO
 var move_elapsed: float = 0.0
 
 var buffered_direction: Vector2i = Vector2i.ZERO
+var held_directions: Array[Vector2i] = []
+var move_carry: float = 0.0
 
 var game_time: float = 0.0
 var game_over: bool = false
@@ -631,9 +640,7 @@ func _process(delta: float) -> void:
 	if Input.is_action_just_pressed("ping"):
 		_try_emit_ping()
 	
-	var requested_direction: Vector2i = _read_move_direction()
-	if requested_direction != Vector2i.ZERO:
-		buffered_direction = requested_direction
+	_update_held_directions()
 	
 	if is_moving:
 		move_elapsed += delta
@@ -643,15 +650,20 @@ func _process(delta: float) -> void:
 		player_draw_position = move_source.lerp(move_destination, progress)
 		
 		if progress >= 1.0:
+			move_carry = minf(move_elapsed - MOVE_TIME_PER_TILE, MOVE_TIME_PER_TILE * 0.5)
 			player_cell = move_destination_cell
 			player_draw_position = move_destination
 			is_moving = false
-			_make_noise(player_cell, FOOTSTEP_NOISE_RANGE_TILES, AWARENESS_PER_PING)
+			_make_noise(player_cell, FOOTSTEP_NOISE_RANGE_TILES, AWARENESS_PER_FOOTSTEP)
 	
-	if not is_moving and buffered_direction != Vector2i.ZERO:
-		var next_direction: Vector2i = buffered_direction
+	if not is_moving:
+		var next_direction: Vector2i = _choose_move_direction()
 		buffered_direction = Vector2i.ZERO
-		_try_start_move(next_direction)
+		
+		if next_direction != Vector2i.ZERO:
+			_try_start_move(next_direction)
+		
+		move_carry = 0.0
 	
 	_update_pulses(delta)
 	_update_monster_movement(delta)
@@ -662,26 +674,34 @@ func _process(delta: float) -> void:
 	
 	queue_redraw()
 
-func _read_move_direction() -> Vector2i:
-	var input_vector: Vector2 = Input.get_vector(
-		"move_left",
-		"move_right",
-		"move_up",
-		"move_down"
-	)
-	
-	if input_vector.is_zero_approx():
-		return Vector2i.ZERO
-	
-	if absf(input_vector.x) > absf(input_vector.y):
-		if input_vector.x > 0.0:
-			return Vector2i(1, 0)
-		return Vector2i(-1, 0)
-	
-	if input_vector.y > 0.0:
-		return Vector2i(0, 1)
-	return Vector2i(0, -1)
+func _update_held_directions() -> void:
+	for action in MOVE_ACTIONS:
+		var direction: Vector2i = MOVE_ACTIONS[action]
+		
+		if Input.is_action_pressed(action):
+			held_directions.erase(direction)
+			held_directions.append(direction)
+			buffered_direction = direction
+		elif not Input.is_action_pressed(action):
+			held_directions.erase(direction)
 
+func _choose_move_direction() -> Vector2i:
+	var candidates: Array[Vector2i] = []
+	
+	if buffered_direction != Vector2i.ZERO:
+		candidates.append(buffered_direction)
+	
+	for i in range(held_directions.size() -1, -1, -1):
+		candidates.append(held_directions[i])
+	
+	for direction in candidates:
+		if _is_walkable(player_cell + direction):
+			return direction
+	
+	if candidates.is_empty():
+		return Vector2i.ZERO
+	return candidates[0]
+ 
 func _try_start_move(direction: Vector2i) -> void:
 	if player_facing != direction:
 		player_facing = direction
@@ -694,7 +714,7 @@ func _try_start_move(direction: Vector2i) -> void:
 	move_destination_cell = destination_cell
 	move_source = player_draw_position
 	move_destination = _cell_center(destination_cell)
-	move_elapsed = 0.0
+	move_elapsed = move_carry
 	is_moving = true
 	
 
