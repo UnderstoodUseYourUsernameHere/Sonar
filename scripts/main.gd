@@ -71,11 +71,11 @@ const MONSTER_ATTACK_WINDUP: float = 0.3
 const WALL_DIM_SEEN_ALPHA: float = 0.35 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
 const WALL_FLASH_DURATION: float = 1.2
 
-const SCAN_RAY_COUNT: int = 720
-const SCAN_POINT_LENGTH: float = 2.2
+const SCAN_RAY_COUNT: int = 520
+const SCAN_POINT_LENGTH: float = 3.2
 const SCAN_POINT_WIDTH: float = 1.4
 const SCAN_JITTER: float = 0.6
-const SCAN_MAX_POINTS: int = 6000
+const SCAN_MAX_POINTS: int = 5000
 const SCAN_HOLD_DURATION: float = 8.0
 const SCAN_FADE_DURATION: float = 12.0
 
@@ -897,8 +897,8 @@ func _cast_scan_ray(origin: Vector2, direction: Vector2, max_distance: float) ->
 	var t_max_y: float = INF
 	var t_delta_y: float = INF
 	if not is_zero_approx(direction.y):
-		var boundary_y: float = float(cell.x + (1 if step_y > 0 else 0)) * TILE_SIZE
-		t_max_y = TILE_SIZE / absf(direction.y)
+		var boundary_y: float = float(cell.y + (1 if step_y > 0 else 0)) * TILE_SIZE
+		t_max_y = (boundary_y - origin.y) / direction.y
 		t_delta_y = TILE_SIZE / absf(direction.y)
 	
 	for _step in range(64):
