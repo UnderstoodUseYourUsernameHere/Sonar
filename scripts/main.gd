@@ -68,8 +68,16 @@ const MONSTER_HUNT_PROXIMITY_TILES: float = 2.0
 const MONSTER_ATTACK_TRIGGER_DISTANCE: float = TILE_SIZE * 0.9
 const MONSTER_ATTACK_WINDUP: float = 0.3
 
-const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
+const WALL_DIM_SEEN_ALPHA: float = 0.35 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
 const WALL_FLASH_DURATION: float = 1.2
+
+const SCAN_RAY_COUNT: int = 720
+const SCAN_POINT_LENGTH: float = 2.2
+const SCAN_POINT_WIDTH: float = 1.4
+const SCAN_JITTER: float = 0.6
+const SCAN_MAX_POINTS: int = 6000
+const SCAN_HOLD_DURATION: float = 8.0
+const SCAN_FADE_DURATION: float = 12.0
 
 const MONSTER_ROAM_WAIT: float = 0.75
 const MONSTER_ROAM_MIN_DISTANCE: int = 8
@@ -128,11 +136,19 @@ const MAP_ROWS: Array[String] = [
 	"################################"
 ]
 
+class ScanPoint:
+	var position: Vector2
+	var tangent: Vector2
+	var distance: float = 0.0
+	var born_time: float = 0.0
+
 class SonarPulse:
 	var origin: Vector2
 	var origin_cell: Vector2i
 	var radius: float = 0.0
 	var previous_radius: float = 0.0
+	var hits: Array[ScanPoint] = []
+	var next_hit_index: int = 0
 	
 	func _init(start_origin: Vector2, start_cell: Vector2i) -> void:
 		origin = start_origin
@@ -177,7 +193,8 @@ var game_over: bool = false
 var active_pulses: Array[SonarPulse] = []
 var wall_cells: Array[Vector2i] = []
 var walkable_cells: Array[Vector2i] = []
-var wall_last_lit: Dictionary = {}
+var scan_points: Array[ScanPoint] = []
+var scan_rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
 var last_ping_time: float = -1000.0
 
@@ -256,6 +273,7 @@ func _ready() -> void:
 	
 	map_is_valid = true
 	monster_rng.randomize()
+	scan_rng.randomize()
 	 
 	player_draw_position = _cell_center(player_cell)
 	player_draw_angle = Vector2(player_facing).angle()
@@ -719,6 +737,7 @@ func _process(delta: float) -> void:
 		return
 	
 	game_time += delta
+	_update_scan_points()
 	
 	if Input.is_action_just_pressed("ping"):
 		_try_emit_ping()
@@ -863,6 +882,70 @@ func _has_line_of_sight(from_cell: Vector2i, to_cell: Vector2i) -> bool:
 			y += step_y
 	return true
 
+func _cast_scan_ray(origin: Vector2, direction: Vector2, max_distance: float) -> ScanPoint:
+	var cell: Vector2i = _cell_from_position(origin)
+	var step_x: int = 1 if direction.x > 0.0 else -1
+	var step_y: int = 1 if direction.y > 0.0 else -1
+	
+	var t_max_x: float  = INF
+	var t_delta_x: float = INF
+	if not is_zero_approx(direction.x):
+		var boundary_x: float = float(cell.x + (1 if step_x > 0 else 0)) * TILE_SIZE
+		t_max_x = (boundary_x - origin.x) / direction.x
+		t_delta_x = TILE_SIZE / absf(direction.x)
+	
+	var t_max_y: float = INF
+	var t_delta_y: float = INF
+	if not is_zero_approx(direction.y):
+		var boundary_y: float = float(cell.x + (1 if step_y > 0 else 0)) * TILE_SIZE
+		t_max_y = TILE_SIZE / absf(direction.y)
+		t_delta_y = TILE_SIZE / absf(direction.y)
+	
+	for _step in range(64):
+		var t: float
+		var tangent: Vector2
+		
+		if t_max_x < t_max_y:
+			t = t_max_x
+			t_max_x += t_delta_x
+			cell.x += step_x
+			tangent = Vector2(0.0, 1.0)
+		else:
+			t = t_max_y
+			t_max_y += t_delta_y
+			cell.y += step_y
+			tangent = Vector2(1.0, 0.0)
+		
+		if t > max_distance:
+			return null
+		
+		if _is_wall(cell):
+			var point: ScanPoint = ScanPoint.new()
+			point.position = origin + direction * t
+			point.tangent = tangent
+			point.distance = t 
+			return point
+	return null
+
+func _build_pulse_hits(pulse: SonarPulse) -> void:
+	var angle_offset: float = scan_rng.randf_range(0.0, TAU / SCAN_RAY_COUNT)
+	
+	for ray_index in range(SCAN_RAY_COUNT):
+		var angle: float = angle_offset + TAU * float(ray_index) / SCAN_RAY_COUNT
+		var direction: Vector2 = Vector2.from_angle(angle)
+		var hit: ScanPoint = _cast_scan_ray(pulse.origin, direction, PING_MAX_RADIUS)
+		
+		if hit == null:
+			continue
+		
+		hit.position += Vector2(
+			scan_rng.randf_range(-SCAN_JITTER, SCAN_JITTER),
+			scan_rng.randf_range(-SCAN_JITTER, SCAN_JITTER)
+		)
+		pulse.hits.append(hit)
+	
+	pulse.hits.sort_custom(func(a: ScanPoint, b: ScanPoint) -> bool: return a.distance < b.distance)
+
 func _try_emit_ping() -> void:
 	if game_time - last_ping_time < PING_COOLDOWN:
 		return
@@ -870,8 +953,10 @@ func _try_emit_ping() -> void:
 	var origin: Vector2 = player_draw_position
 	var origin_cell: Vector2i = _cell_from_position(origin)
 	
-	active_pulses.append(SonarPulse.new(origin, origin_cell))
-	
+	var pulse: SonarPulse = SonarPulse.new(origin, origin_cell)
+	_build_pulse_hits(pulse)
+	active_pulses.append(pulse)
+		
 	_make_noise(origin_cell, PING_NOISE_RANGE_TILES, AWARENESS_PER_PING)
 	last_ping_time = game_time
 
@@ -895,7 +980,7 @@ func _update_pulses(delta: float) -> void:
 	for pulse in active_pulses:
 		pulse.previous_radius = pulse.radius
 		pulse.radius = minf(pulse.radius + PING_SPEED * delta, PING_MAX_RADIUS)
-		_reveal_walls_for_pulse(pulse)
+		_reveal_scan_for_pulse(pulse)
 		_reveal_monster_for_pulse(pulse)
 		_reveal_card_for_pulse(pulse)
 		_reveal_exit_for_pulse(pulse)
@@ -1007,13 +1092,24 @@ func _on_monster_heard_noise() -> void:
 	else:
 		_begin_monster_investigation(last_noise_cell)
 
-func _reveal_walls_for_pulse(pulse: SonarPulse) -> void:
-	for cell in wall_cells:
-		var distance: float = pulse.origin.distance_to(_cell_center(cell))
+func _reveal_scan_for_pulse(pulse: SonarPulse) -> void:
+	while pulse.next_hit_index < pulse.hits.size():
+		var hit: ScanPoint = pulse.hits[pulse.next_hit_index]
 		
-		if distance > pulse.previous_radius and distance <= pulse.radius:
-			if _has_line_of_sight(pulse.origin_cell, cell):
-				wall_last_lit[cell] = game_time
+		if hit.distance > pulse.radius:
+			return
+		
+		hit.born_time = game_time
+		scan_points.append(hit)
+		pulse.next_hit_index += 1
+
+func _update_scan_points() -> void:
+	var total_life: float = WALL_FLASH_DURATION + SCAN_HOLD_DURATION + SCAN_FADE_DURATION
+	while not scan_points.is_empty() and game_time - scan_points[0].born_time >= total_life:
+		scan_points.remove_at(0)
+	
+	while scan_points.size() > SCAN_MAX_POINTS:
+		scan_points.remove_at(0)
 
 func _reveal_card_for_pulse(pulse: SonarPulse) -> void:
 	if has_access_card:
@@ -1107,7 +1203,7 @@ func _draw() -> void:
 		BACKGROUND_COLOR,
 		true
 	)
-	_draw_revealed_walls()
+	_draw_scan_points()
 	_draw_pulses()
 	_draw_access_card()
 	_draw_exit_marker()
@@ -1152,35 +1248,37 @@ func _build_monster_shape() -> void:
 		monster_dot_offsets.append(dot_offset)
 		monster_dot_sizes.append(dot_radius)
 
-func _draw_revealed_walls() -> void:
-	for cell in wall_cells:
-		if not wall_last_lit.has(cell):
-			continue
+func _draw_scan_points() -> void:
+	if scan_points.is_empty():
+		return
+	
+	var segments: PackedVector2Array = PackedVector2Array()
+	var colors: PackedColorArray = PackedColorArray()
+	
+	segments.resize(scan_points.size() * 2)
+	colors.resize(scan_points.size())
+	
+	for index in range(scan_points.size()):
+		var point: ScanPoint = scan_points[index]
+		var half_segment: Vector2 = point.tangent * (SCAN_POINT_LENGTH * 0.5)
 		
-		var seconds_since_lit: float = game_time - wall_last_lit[cell]
+		segments[index * 2] = point.position - half_segment
+		segments[index * 2 + 1] = point.position + half_segment
+		colors[index] = Color(WALL_COLOR, _scan_point_alpha(game_time - point.born_time))
 		
-		var flash: float = clampf(
-			1.0 - seconds_since_lit / WALL_FLASH_DURATION,
-			0.0,
-			1.0
-		)
-		flash = flash * flash
-		
-		var alpha: float = lerpf(WALL_DIM_SEEN_ALPHA, 1.0, flash)
-		var color: Color = Color(WALL_COLOR, alpha)
-		
-		var wall_rect: Rect2 = Rect2(
-			Vector2(
-				float(cell.x * TILE_SIZE) + 2.0,
-				float(cell.y * TILE_SIZE) + 2.0
-			),
-			
-			Vector2(
-				float(TILE_SIZE) - 4.0,
-				float(TILE_SIZE) - 4.0
-			)
-		)
-		draw_rect(wall_rect, color, false, 1.5)
+	draw_multiline_colors(segments, colors, SCAN_POINT_WIDTH)
+
+func _scan_point_alpha(age: float) -> float:
+	if age < WALL_FLASH_DURATION:
+		var flash: float = 1.0 - age / WALL_FLASH_DURATION
+		return lerpf(WALL_DIM_SEEN_ALPHA, 1.0, flash * flash)
+	
+	var memory_age: float = age - WALL_FLASH_DURATION - SCAN_HOLD_DURATION
+	
+	if memory_age <= 0.0:
+		return WALL_DIM_SEEN_ALPHA
+	
+	return WALL_DIM_SEEN_ALPHA * clampf(1.0 - memory_age / SCAN_FADE_DURATION, 0.0, 1.0)
 
 func _draw_access_card() -> void:
 	if has_access_card: 
