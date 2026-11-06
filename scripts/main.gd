@@ -66,7 +66,7 @@ const MONSTER_HUNT_MOVE_TIME: float = 0.15
 const MONSTER_HUNT_LOSE_SECONDS: float = 2.5
 const MONSTER_HUNT_PROXIMITY_TILES: float = 2.0
 const MONSTER_ATTACK_TRIGGER_DISTANCE: float = TILE_SIZE * 0.9
-const MONSTER_ATTACK_WINDUP: float = 0.3
+const MONSTER_ATTACK_WINDUP: float = 0.30
 
 const WALL_DIM_SEEN_ALPHA: float = 0.35 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
 const WALL_FLASH_DURATION: float = 1.2
@@ -82,6 +82,9 @@ const SCAN_FADE_DURATION: float = 12.0
 const MONSTER_ROAM_WAIT: float = 0.75
 const MONSTER_ROAM_MIN_DISTANCE: int = 8
 const MONSTER_ROAM_ATTEMPTS: int = 40
+
+const MONSTER_GUARD_CHANCE: float = 0.40
+const MONSTER_GUARD_RADIUS: int = 5
 
 const MONSTER_ROAM_MOVE_TIME: float = 0.26
 const MONSTER_INVESTIGATE_MOVE_TIME: float = 0.18
@@ -107,7 +110,7 @@ const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
 const EXIT_DIM_ALPHA: float = 0.30
 const EXIT_FLASH_DURATION: float = 1.0
 
-const DEBUG_SHOW_MONSTER: bool = false
+const DEBUG_SHOW_MONSTER: bool = true
 
 const MAP_ROWS: Array[String] = [
 	"################################",
@@ -484,6 +487,17 @@ func _pick_roam_target() -> Vector2i:
 	if walkable_cells.is_empty():
 		return monster_cell
 	
+	if monster_rng.randf() < MONSTER_GUARD_CHANCE:
+		var objective_cell: Vector2i = card_cell
+		
+		if has_access_card:
+			objective_cell = exit_cell
+		
+		return _pick_cell_near(
+			objective_cell,
+			MONSTER_GUARD_RADIUS
+		)
+	
 	for _attempt in range(MONSTER_ROAM_ATTEMPTS):
 		var random_index: int = monster_rng.randi_range(0, walkable_cells.size() - 1)
 		var candidate: Vector2i = walkable_cells[random_index]
@@ -654,22 +668,22 @@ func _update_monster_hunting(delta: float) -> void:
 		monster_awareness = AWARENESS_AFTER_LOST_HUNT
 		_begin_monster_search(monster_hunt_target)
 
-func _pick_monster_search_target() -> Vector2i:
+func _pick_cell_near(center: Vector2i, radius: int) -> Vector2i:
 	var candidates: Array[Vector2i] = []
 	
 	for cell in walkable_cells:
 		var distance: int = (
-			absi(cell.x - monster_search_center.x) + absi(cell.y - monster_search_center.y)
+			absi(cell.x - center.x) + absi(cell.y - center.y)
 		)
 		
 		if (
 			distance > 0 
-			and distance <= MONSTER_SEARCH_RADIUS
+			and distance <= radius
 			and cell != monster_cell
 		):
 			candidates.append(cell)
 	if candidates.is_empty():
-		return monster_search_center
+		return center
 	
 	var random_index: int = monster_rng.randi_range(0, candidates.size() - 1)
 	
@@ -717,7 +731,10 @@ func _update_monster_searching(delta: float) -> void:
 	if monster_search_wait_remaining > 0.0:
 		return
 	
-	var target_cell: Vector2i = _pick_monster_search_target()
+	var target_cell: Vector2i = _pick_cell_near(
+		monster_search_center,
+		MONSTER_SEARCH_RADIUS
+	)
 	
 	if target_cell != monster_cell:
 		_set_monster_path(target_cell)
