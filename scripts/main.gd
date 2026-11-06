@@ -27,6 +27,18 @@ const PING_NOISE_RANGE_TILES: float = 12.0 ## How far the monster can hear a pin
 const FOOTSTEP_NOISE_RANGE_TILES: float = 3.5
 const FOOTSTEP_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
 
+const SENSE_RANGE_TILES: float = 7.0 ## When its actively hunting
+const SENSE_RANGE_QUIET_TILES: float = 4.0 ## Wandering
+const SENSE_INTERVAL_FAR: float = 0.9
+const SENSE_INTERVAL_NEAR: float = 0.22
+const SENSE_ARC_DURATION: float = 0.7
+const SENSE_ARC_SPAN: float = 0.9 ## Radians at full width, damn i hate math
+const SENSE_ARC_SPEED: float = 95.0 ## How many pixels per second outward
+const SENSE_ARC_START: float = TILE_SIZE * 0.55
+const SENSE_STAMP_DURATION: float = 0.55
+const SENSE_JITTER_MAX: float = TILE_SIZE * 1.1
+const SENSE_COLOR: Color = Color(1.0, 0.25, 0.30, 1.0)
+
 const AWARENESS_PER_PING: float = 0.45
 const AWARENESS_PER_FOOTSTEP: float = 0.06
 const AWARENESS_DECAY_PER_SECOND: float = 0.04
@@ -79,7 +91,7 @@ const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
 const EXIT_DIM_ALPHA: float = 0.30
 const EXIT_FLASH_DURATION: float = 1.0
 
-const DEBUG_SHOW_MONSTER: bool = true
+const DEBUG_SHOW_MONSTER: bool = false
 
 const MAP_ROWS: Array[String] = [
 	"################################",
@@ -117,6 +129,13 @@ class SonarPulse:
 	func _init(start_origin: Vector2, start_cell: Vector2i) -> void:
 		origin = start_origin
 		origin_cell = start_cell
+
+class SenseArc:
+	var origin: Vector2
+	var angle: float = 0.0
+	var closeness: float = 0.0 ## 0 is furthest, 1 is closest
+	var born_time: float = 0.0
+	
 
 enum MonsterState {
 	ROAMING,
@@ -186,6 +205,12 @@ var monster_search_time_remaining: float = 0.0
 var monster_search_wait_remaining: float = 0.0 
 var monster_snapshot_position: Vector2 = Vector2.ZERO
 var monster_snapshot_time: float = -1000.0
+
+var sense_arcs: Array[SenseArc] = []
+var next_sense_time: float = 0.0
+var monster_sense_position: Vector2 = Vector2.ZERO
+var monster_sense_time: float = -1000.0
+var monster_sense_confidence: float = 0.0
 
 var monster_stalk_target: Vector2i = Vector2i.ZERO
 var monster_stalk_distance: int = MONSTER_STALK_DISTANCE_START
@@ -674,6 +699,7 @@ func _process(delta: float) -> void:
 	
 	_update_pulses(delta)
 	_update_monster_movement(delta)
+	_update_proximity_sense()
 	_update_monster_ai(delta)
 	_check_card_collection()
 	_check_player_caught()
@@ -825,6 +851,52 @@ func _update_pulses(delta: float) -> void:
 		if active_pulses[i].radius >= PING_MAX_RADIUS:
 			active_pulses.remove_at(i)
 
+func _sense_range_for_state() -> float:
+	match monster_state:
+		MonsterState.ROAMING, MonsterState.SEARCHING:
+			return SENSE_RANGE_QUIET_TILES
+		_:
+			return SENSE_RANGE_TILES
+
+func _update_proximity_sense() -> void:
+	for i in range(sense_arcs.size() -1, -1, -1):
+		if game_time - sense_arcs[i].born_time > SENSE_ARC_DURATION:
+			sense_arcs.remove_at(i)
+	
+	if game_time < next_sense_time:
+		return
+	
+	var to_monster: Vector2 = monster_draw_position - player_draw_position
+	var distance_tiles: float = to_monster.length() / TILE_SIZE
+	var range_tiles: float = _sense_range_for_state()
+	
+	if distance_tiles > range_tiles:
+		next_sense_time = game_time + SENSE_INTERVAL_FAR
+		return
+	
+	var closeness: float = 1.0 - clampf(distance_tiles / range_tiles, 0.0, 1.0)
+	
+	next_sense_time = game_time + lerpf(SENSE_INTERVAL_FAR, SENSE_INTERVAL_NEAR, closeness)
+	
+	var arc: SenseArc = SenseArc.new()
+	arc.origin = player_draw_position
+	arc.angle = to_monster.angle()
+	arc.closeness = closeness
+	arc.born_time = game_time
+	sense_arcs.append(arc)
+	
+	var jitter: float = SENSE_JITTER_MAX * (1.0 - closeness)
+	
+	if not _has_line_of_sight(player_cell, _cell_from_position(monster_draw_position)):
+		jitter += SENSE_JITTER_MAX * 0.6
+	
+	monster_sense_position = monster_draw_position + Vector2(
+		monster_rng.randf_range(-jitter, jitter),
+		monster_rng.randf_range(-jitter, jitter)
+	)
+	monster_sense_time = game_time
+	monster_sense_confidence = closeness
+
 func _update_monster_ai(delta: float) -> void:
 	var decay_rate: float = AWARENESS_DECAY_PER_SECOND
 	if monster_state == MonsterState.STALKING:
@@ -973,6 +1045,8 @@ func _draw() -> void:
 	_draw_pulses()
 	_draw_access_card()
 	_draw_exit_marker()
+	_draw_sense_arcs()
+	_draw_sense_contact()
 	_draw_monster_snapshot()
 	
 	if DEBUG_SHOW_MONSTER:
@@ -1199,6 +1273,38 @@ func _draw_monster_snapshot() -> void:
 	)
 	
 	_draw_monster_at(monster_snapshot_position, alpha)
+
+func _draw_sense_arcs() -> void:
+	for arc in sense_arcs:
+		var age: float = game_time - arc.born_time
+		var t: float = clampf(age / SENSE_ARC_DURATION, 0.0, 1.0)
+		
+		var radius: float = SENSE_ARC_START + SENSE_ARC_SPEED * age
+		var alpha: float  = (1.0 - t) * lerpf(0.30, 0.95, arc.closeness)
+		
+		var span: float = SENSE_ARC_SPAN * lerpf(1.7, 0.55, arc.closeness)
+		
+		draw_arc(
+			arc.origin,
+			radius,
+			arc.angle - span * 0.5,
+			arc.angle + span * 0.5,
+			20,
+			Color(SENSE_COLOR, alpha),
+			1.5,
+			true
+		)
+
+func _draw_sense_contact() -> void:
+	var age: float = game_time - monster_sense_time
+	
+	if age < 0.0 or age > SENSE_STAMP_DURATION:
+		return
+	
+	var fade: float =  1.0 - age / SENSE_STAMP_DURATION
+	var alpha: float  = fade * lerpf(0.20, 0.75, monster_sense_confidence)
+	
+	_draw_monster_at(monster_sense_position, alpha)
 
 func _draw_monster_ai_debug() -> void:
 	var target_center: Vector2
