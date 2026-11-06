@@ -14,7 +14,7 @@ const BACKGROUND_COLOR: Color = Color(0.0, 0.0, 0.0, 1.0)
 const WALL_COLOR: Color = Color(0.12, 0.90, 0.38, 1.0)
 const PLAYER_COLOR: Color = Color(0.96, 0.98, 1.0, 1.0)
 
-const PLAYER_TURN_SPEED: float = 22.0
+const PLAYER_TURN_SPEED: float = 25.0
 const PLAYER_STRETCH: float = 0.12
 
 const PING_SPEED: float = 320.0 ## This is how fast the ring/circle grows 
@@ -68,7 +68,7 @@ const MONSTER_COLOR: Color = Color(0.85, 0.12, 0.15, 1.0)
 const MONSTER_DOT_COUNT: int = 11
 const MONSTER_DOT_COUNT_VARIANCE: int = 3
 const MONSTER_CLUSTER_RADIUS: float = TILE_SIZE * 0.38
-const MONSTER_MOVE_TIME_PER_TILE: float = 0.22
+
 
 const CARD_COLOR: Color = Color(1.0, 0.82, 0.18, 1.0)
 const CARD_DIM_ALPHA: float = 0.30
@@ -685,7 +685,7 @@ func _update_held_directions() -> void:
 	for action in MOVE_ACTIONS:
 		var direction: Vector2i = MOVE_ACTIONS[action]
 		
-		if Input.is_action_pressed(action):
+		if Input.is_action_just_pressed(action):
 			held_directions.erase(direction)
 			held_directions.append(direction)
 			buffered_direction = direction
@@ -828,7 +828,7 @@ func _update_pulses(delta: float) -> void:
 func _update_monster_ai(delta: float) -> void:
 	var decay_rate: float = AWARENESS_DECAY_PER_SECOND
 	if monster_state == MonsterState.STALKING:
-		decay_rate = AWARENESS_DECAY_PER_SECOND
+		decay_rate = AWARENESS_STALK_DECAY_PER_SECOND
 	elif monster_state == MonsterState.HUNTING:
 		decay_rate = 0.0
 	monster_awareness = maxf(monster_awareness - AWARENESS_DECAY_PER_SECOND * delta, 0.0)
