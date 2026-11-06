@@ -20,6 +20,15 @@ const FOOTSTEP_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
 const AWARENESS_PER_PING: float = 0.45
 const AWARENESS_PER_FOOTSTEP: float = 0.06
 const AWARENESS_DECAY_PER_SECOND: float = 0.04
+ 
+const AWARENESS_STALK_THRESHOLD: float = 0.5 ## Enters stalking above this
+const AWARENESS_STALK_EXIT: float = 0.25 ## Exits stalking below this
+const AWARENESS_STALK_DECAY_PER_SECOND: float = 0.02
+
+const MONSTER_STALK_MOVE_TIME: float = 0.16
+const MONSTER_STALK_DISTANCE_START: int = 6
+const MONSTER_STALK_DISTANCE_MIN: int = 2
+const MONSTER_STALK_CREEP_SECONDS: float = 3.0
 
 const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
 const WALL_FLASH_DURATION: float = 1.2
@@ -96,7 +105,8 @@ class SonarPulse:
 enum MonsterState {
 	ROAMING,
 	INVESTIGATING,
-	SEARCHING
+	SEARCHING,
+	STALKING
 }
 
 var map_width: int = 0
@@ -156,6 +166,10 @@ var monster_search_time_remaining: float = 0.0
 var monster_search_wait_remaining: float = 0.0 
 var monster_snapshot_position: Vector2 = Vector2.ZERO
 var monster_snapshot_time: float = -1000.0
+
+var monster_stalk_target: Vector2i = Vector2i.ZERO
+var monster_stalk_distance: int = MONSTER_STALK_DISTANCE_START
+var monster_stalk_creep_remaining: float = 0.0
 
 var card_cell: Vector2i = Vector2i.ZERO
 var card_draw_position: Vector2 = Vector2.ZERO
@@ -368,6 +382,8 @@ func _monster_move_time_for_state() -> float:
 			return MONSTER_INVESTIGATE_MOVE_TIME
 		MonsterState.SEARCHING:
 			return MONSTER_SEARCH_MOVE_TIME
+		MonsterState.STALKING:
+			return MONSTER_STALK_MOVE_TIME
 		_:
 			return MONSTER_ROAM_MOVE_TIME
 
@@ -450,6 +466,45 @@ func _begin_monster_search(center_cell: Vector2i) -> void:
 	monster_search_time_remaining = MONSTER_SEARCH_DURATION
 	monster_search_wait_remaining = 0.0
 	monster_path.clear()
+
+func _begin_monster_stalking(target_cell: Vector2i) -> void:
+	if monster_state != MonsterState.STALKING:
+		monster_stalk_distance = MONSTER_STALK_DISTANCE_START
+		monster_stalk_creep_remaining = MONSTER_STALK_CREEP_SECONDS
+	
+	monster_state = MonsterState.STALKING
+	monster_stalk_target = target_cell
+	monster_path.clear()
+	monster_needs_new_path = true
+
+func _set_monster_stalk_path() -> void:
+	_set_monster_path(monster_stalk_target)
+	var kept_steps: int = maxi(monster_path.size() - monster_stalk_distance, 0) ## This should in theory cut off the steps before it actually reaches the player, to actually... stalk
+	monster_path.resize(kept_steps)
+
+func _update_monster_stalking(delta: float) -> void:
+	if monster_awareness < AWARENESS_STALK_EXIT:
+		_begin_monster_search(monster_cell) ## If it loses interest it looks around where it is then wanders away
+		return
+	
+	if is_monster_moving:
+		return
+	
+	if monster_needs_new_path:
+		_set_monster_stalk_path()
+		monster_needs_new_path = false
+		return
+	
+	if not monster_path.is_empty():
+		return
+	
+	monster_stalk_creep_remaining -= delta
+	if monster_stalk_creep_remaining <= 0.0:
+		monster_stalk_creep_remaining = MONSTER_STALK_CREEP_SECONDS
+		
+		if monster_stalk_distance > MONSTER_STALK_DISTANCE_MIN:
+			monster_stalk_distance -= 1
+			monster_needs_new_path = true
 
 func _pick_monster_search_target() -> Vector2i:
 	var candidates: Array[Vector2i] = []
@@ -705,6 +760,9 @@ func _update_pulses(delta: float) -> void:
 			active_pulses.remove_at(i)
 
 func _update_monster_ai(delta: float) -> void:
+	var decay_rate: float = AWARENESS_DECAY_PER_SECOND
+	if monster_state == MonsterState.STALKING:
+		decay_rate = AWARENESS_DECAY_PER_SECOND
 	monster_awareness = maxf(monster_awareness - AWARENESS_DECAY_PER_SECOND * delta, 0.0)
 	
 	if last_noise_time > monster_last_heard_noise_time:
@@ -722,10 +780,17 @@ func _update_monster_ai(delta: float) -> void:
 		
 		MonsterState.SEARCHING:
 			_update_monster_searching(delta)
+		
+		MonsterState.STALKING:
+			_update_monster_stalking(delta)
 
 func _on_monster_heard_noise() -> void:
 	monster_awareness = minf(monster_awareness + last_noise_loudness, 1.0)
-	_begin_monster_investigation(last_noise_cell)
+	
+	if monster_awareness >= AWARENESS_STALK_THRESHOLD:
+		_begin_monster_stalking(last_noise_cell)
+	else:
+		_begin_monster_investigation(last_noise_cell)
 
 func _reveal_walls_for_pulse(pulse: SonarPulse) -> void:
 	for cell in wall_cells:
@@ -1057,14 +1122,25 @@ func _draw_monster_ai_debug() -> void:
 	var target_center: Vector2
 	var marker_color: Color
 	
-	if monster_state == MonsterState.INVESTIGATING:
-		target_center = _cell_center(monster_investigation_target)
-		marker_color = Color(1.0, 0.55, 0.1, 0.9)
-	elif monster_state == MonsterState.SEARCHING:
-		target_center = _cell_center(monster_search_center)
-		marker_color = Color(0.7, 0.2, 1.0, 0.9)
-	else:
-		return
+	match monster_state:
+		MonsterState.INVESTIGATING:
+			target_center = _cell_center(monster_investigation_target)
+			marker_color = Color(1.0, 0.55, 0.1, 0.9)
+		MonsterState.SEARCHING:
+			target_center = _cell_center(monster_search_center)
+			marker_color = Color(0.7, 0.2, 1.0, 0.9)
+		MonsterState.STALKING:
+			target_center = _cell_center(monster_stalk_target)
+			marker_color = Color(0.95, 0.95, 0.95, 0.9)
+			draw_arc(
+				target_center,
+				monster_stalk_distance * TILE_SIZE,
+				0.0, TAU, 48,
+				Color(marker_color, 0.25),
+				1.0, true
+			)
+		_:
+			return
 	
 	var marker_rect : Rect2 = Rect2(
 		target_center - Vector2(8.0, 8.0),
