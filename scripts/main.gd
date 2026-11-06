@@ -17,6 +17,10 @@ const PING_NOISE_RANGE_TILES: float = 12.0 ## How far the monster can hear a pin
 const FOOTSTEP_NOISE_RANGE_TILES: float = 3.5
 const FOOTSTEP_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
 
+const AWARENESS_PER_PING: float = 0.45
+const AWARENESS_PER_FOOTSTEP: float = 0.06
+const AWARENESS_DECAY_PER_SECOND: float = 0.04
+
 const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
 const WALL_FLASH_DURATION: float = 1.2
 
@@ -50,7 +54,7 @@ const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
 const EXIT_DIM_ALPHA: float = 0.30
 const EXIT_FLASH_DURATION: float = 1.0
 
-const DEBUG_SHOW_MONSTER: bool = false
+const DEBUG_SHOW_MONSTER: bool = true
 
 const MAP_ROWS: Array[String] = [
 	"################################",
@@ -58,23 +62,23 @@ const MAP_ROWS: Array[String] = [
 	"#......#..........#............#",
 	"#..E...........................#",
 	"#......#..........#............#",
-	"####.####..####...########.#####",
-	"#......#...####...#............#",
-	"#......#...####...#............#",
-	"#......#...####...#............#",
+	"#.##.####....##...####.###.#####",
+	"#......#.....##...#............#",
+	"#......#.....##...#............#",
+	"#......#.....##...#............#",
 	"#......#..........#.....X......#",
-	"##.#####..####....####.#########",
-	"#......#..####....#............#",
-	"#......#..####....#............#",
-	"#......#..####....#............#",
+	"##...###...##.....####.#####.###",
+	"#......#...##.....#............#",
+	"#......#...##.....#............#",
+	"#......#...##.....#............#",
 	"#......#..........#............#",
-	"####.####.....#####.############",
+	"####.####.....########...#######",
 	"#......#......#....#...........#",
 	"#......#......#....#...........#",
 	"#......#......#................#",
 	"#......#......#....#.....K.....#",
-	"#..............#...#...........#",
-	"#......####.####...#...........#",
+	"#..............................#",
+	"#..............................#",
 	"#......................M.......#",
 	"################################"
 ]
@@ -123,6 +127,8 @@ var last_ping_time: float = -1000.0
 var last_noise_cell: Vector2i = Vector2i.ZERO
 var last_noise_time: float = -1000.0
 var last_noise_range_tiles: float = 0.0
+var last_noise_loudness: float = 0.0
+var monster_awareness: float = 0.0
 
 var monster_cell: Vector2i = Vector2i.ZERO
 var monster_draw_position: Vector2 = Vector2.ZERO
@@ -546,7 +552,7 @@ func _process(delta: float) -> void:
 			player_cell = move_destination_cell
 			player_draw_position = move_destination
 			is_moving = false
-			_make_noise(player_cell, FOOTSTEP_NOISE_RANGE_TILES)
+			_make_noise(player_cell, FOOTSTEP_NOISE_RANGE_TILES, AWARENESS_PER_PING)
 	
 	if not is_moving and buffered_direction != Vector2i.ZERO:
 		var next_direction: Vector2i = buffered_direction
@@ -666,16 +672,17 @@ func _try_emit_ping() -> void:
 	
 	active_pulses.append(SonarPulse.new(origin, origin_cell))
 	
-	_make_noise(origin_cell, PING_NOISE_RANGE_TILES)
+	_make_noise(origin_cell, PING_NOISE_RANGE_TILES, AWARENESS_PER_PING)
 	last_ping_time = game_time
 
-func _make_noise(cell: Vector2i, range_tiles: float) -> void:
-	if is_equal_approx(last_noise_time, game_time) and range_tiles < last_noise_range_tiles:
+func _make_noise(cell: Vector2i, range_tiles: float, loudness: float) -> void:
+	if is_equal_approx(last_noise_time, game_time) and loudness < last_noise_loudness:
 		return
 	
 	last_noise_cell = cell
 	last_noise_time = game_time
 	last_noise_range_tiles = range_tiles
+	last_noise_loudness = loudness
 
 func _monster_can_hear(cell: Vector2i, range_tiles: float) -> bool:
 	var distance: float = monster_draw_position.distance_to(_cell_center(cell))
@@ -698,11 +705,13 @@ func _update_pulses(delta: float) -> void:
 			active_pulses.remove_at(i)
 
 func _update_monster_ai(delta: float) -> void:
+	monster_awareness = maxf(monster_awareness - AWARENESS_DECAY_PER_SECOND * delta, 0.0)
+	
 	if last_noise_time > monster_last_heard_noise_time:
 		monster_last_heard_noise_time = last_noise_time
 		
 		if _monster_can_hear(last_noise_cell, last_noise_range_tiles):
-			_begin_monster_investigation(last_noise_cell)
+			_on_monster_heard_noise()
 	
 	match monster_state:
 		MonsterState.ROAMING:
@@ -713,6 +722,10 @@ func _update_monster_ai(delta: float) -> void:
 		
 		MonsterState.SEARCHING:
 			_update_monster_searching(delta)
+
+func _on_monster_heard_noise() -> void:
+	monster_awareness = minf(monster_awareness + last_noise_loudness, 1.0)
+	_begin_monster_investigation(last_noise_cell)
 
 func _reveal_walls_for_pulse(pulse: SonarPulse) -> void:
 	for cell in wall_cells:
@@ -823,6 +836,7 @@ func _draw() -> void:
 	if DEBUG_SHOW_MONSTER:
 		_draw_debug_path()
 		_draw_monster_ai_debug()
+		_draw_awareness_debug()
 		draw_arc(monster_draw_position, PING_NOISE_RANGE_TILES * TILE_SIZE, 0.0, TAU, 64, Color(1.0, 0.3, 0.3, 0.15), 1.0, true)
 		_draw_monster_at(monster_draw_position, 0.35)
 	
@@ -1058,6 +1072,24 @@ func _draw_monster_ai_debug() -> void:
 	)
 	
 	draw_rect(marker_rect, marker_color, false, 2.0)
+
+func _draw_awareness_debug() -> void:
+	var bar_position: Vector2 = monster_draw_position + Vector2(-15.0, -24.0)
+	var bar_size: Vector2 = Vector2(30.0, 4.0)
+	
+	draw_rect(Rect2(bar_position, bar_size), Color(0.3, 0.3, 0.3, 0.8), true)
+	draw_rect(Rect2(bar_position, Vector2(bar_size.x * monster_awareness, bar_size.y)), Color(1.0, 0.3, 0.2, 0.9), true)
+	
+	var state_name: String = MonsterState.keys()[monster_state]
+	draw_string(
+		ThemeDB.fallback_font,
+		bar_position + Vector2(0.0, -4.0),
+		state_name,
+		HORIZONTAL_ALIGNMENT_LEFT,
+		-1,
+		10,
+		Color(1.0, 1.0, 1.0, 0.8)
+	)
 
 func _draw_debug_path() -> void:
 	var color: Color = Color(1.0, 0.85, 0.2, 0.8)
