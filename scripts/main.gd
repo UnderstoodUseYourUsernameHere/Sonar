@@ -14,6 +14,9 @@ const BACKGROUND_COLOR: Color = Color(0.0, 0.0, 0.0, 1.0)
 const WALL_COLOR: Color = Color(0.12, 0.90, 0.38, 1.0)
 const PLAYER_COLOR: Color = Color(0.96, 0.98, 1.0, 1.0)
 
+const PLAYER_TURN_SPEED: float = 22.0
+const PLAYER_STRETCH: float = 0.12
+
 const PING_SPEED: float = 320.0 ## This is how fast the ring/circle grows 
 const PING_MAX_RADIUS: float = 8.5 * TILE_SIZE
 const PING_COOLDOWN: float = 0.6
@@ -130,6 +133,7 @@ var map_is_valid: bool = false
 var player_cell: Vector2i = Vector2i.ZERO
 var player_draw_position: Vector2 = Vector2.ZERO
 var player_facing: Vector2i = Vector2i(0, -1)
+var player_draw_angle: float = -PI / 2.0 
 
 var is_moving: bool = false
 var move_source: Vector2 = Vector2.ZERO
@@ -214,6 +218,7 @@ func _ready() -> void:
 	monster_rng.randomize()
 	 
 	player_draw_position = _cell_center(player_cell)
+	player_draw_angle = Vector2(player_facing).angle()
 	monster_draw_position = _cell_center(monster_cell)
 	card_draw_position = _cell_center(card_cell)
 	exit_draw_position = _cell_center(exit_cell)
@@ -641,6 +646,8 @@ func _process(delta: float) -> void:
 		_try_emit_ping()
 	
 	_update_held_directions()
+	var target_angle: float = Vector2(player_facing).angle()
+	player_draw_angle = lerp_angle(player_draw_angle, target_angle, minf(PLAYER_TURN_SPEED * delta, 1.0))
 	
 	if is_moving:
 		move_elapsed += delta
@@ -1123,21 +1130,26 @@ func _draw_pulses() -> void:
 		)
 
 func _draw_player() -> void:
-	var forward: Vector2 = Vector2(
-		float(player_facing.x),
-		float(player_facing.y)
-	)
+	var forward: Vector2 = Vector2.from_angle(player_draw_angle)
 	var side: Vector2 = Vector2(-forward.y, forward.x)
 	
+	var stretch: float = 0.0
+	
+	if is_moving:
+		var progress: float = clampf(move_elapsed / MOVE_TIME_PER_TILE, 0.0, 1.0)
+		stretch = sin(progress * PI) * PLAYER_STRETCH
+	
+	var center: Vector2 = player_draw_position
+	
 	var nose: Vector2 = (
-		player_draw_position + forward * (TILE_SIZE * 0.30)
+		center + forward * TILE_SIZE * (0.30 + stretch)
 	)
 	
 	var rear_center: Vector2 = (
-		player_draw_position - forward * (TILE_SIZE * 0.20)
+		center - forward * TILE_SIZE * (0.20 + stretch)
 	)
 	
-	var half_width: float = TILE_SIZE * 0.20
+	var half_width: float = TILE_SIZE * (0.20 - stretch * 0.5)
 	
 	var triangle: PackedVector2Array = PackedVector2Array([
 		nose,
