@@ -110,7 +110,7 @@ const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
 const EXIT_DIM_ALPHA: float = 0.30
 const EXIT_FLASH_DURATION: float = 1.0
 
-const DEBUG_SHOW_MONSTER: bool = true
+const DEBUG_SHOW_MONSTER: bool = false
 
 const MAP_ROWS: Array[String] = [
 	"################################",
@@ -151,6 +151,8 @@ class SonarPulse:
 	var previous_radius: float = 0.0
 	var hits: Array[ScanPoint] = []
 	var next_hit_index: int = 0
+	var wave_directions: PackedVector2Array = PackedVector2Array()
+	var wave_stop_distances: PackedFloat32Array = PackedFloat32Array()
 	
 	func _init(start_origin: Vector2, start_cell: Vector2i) -> void:
 		origin = start_origin
@@ -950,9 +952,13 @@ func _build_pulse_hits(pulse: SonarPulse) -> void:
 		var angle: float = angle_offset + TAU * float(ray_index) / SCAN_RAY_COUNT
 		var direction: Vector2 = Vector2.from_angle(angle)
 		var hit: ScanPoint = _cast_scan_ray(pulse.origin, direction, PING_MAX_RADIUS)
+		pulse.wave_directions.append(direction)
 		
 		if hit == null:
+			pulse.wave_stop_distances.append(PING_MAX_RADIUS)
 			continue
+		
+		pulse.wave_stop_distances.append(hit.distance)
 		
 		hit.position += Vector2(
 			scan_rng.randf_range(-SCAN_JITTER, SCAN_JITTER),
@@ -1374,16 +1380,40 @@ func _draw_pulses() -> void:
 		var life: float = pulse.radius / PING_MAX_RADIUS
 		var alpha: float = 1.0 - life
 		
-		draw_arc(
-			pulse.origin,
-			pulse.radius,
-			0.0,
-			TAU,
-			64,
-			Color(PING_RING_COLOR, alpha),
-			PING_RING_WIDTH,
-			true
+		_draw_ping_front(pulse, alpha)
+
+func _draw_ping_front(pulse: SonarPulse, alpha: float) -> void:
+	var segments: PackedVector2Array = PackedVector2Array()
+	var ray_count: int = pulse.wave_directions.size()
+	
+	for ray_index in range(ray_count):
+		var next_index: int = (ray_index + 1) % ray_count
+		
+		if pulse.radius >= pulse.wave_stop_distances[ray_index]:
+			continue
+		
+		if pulse.radius >= pulse.wave_stop_distances[next_index]:
+			continue
+		
+		var start: Vector2 = (
+			pulse.origin + pulse.wave_directions[ray_index] * pulse.radius
 		)
+		
+		var end: Vector2 = (
+			pulse.origin + pulse.wave_directions[next_index] * pulse.radius
+		)
+		
+		segments.append(start)
+		segments.append(end)
+	
+	if segments.is_empty():
+		return
+	
+	draw_multiline(
+		segments,
+		Color(PING_RING_COLOR, alpha),
+		PING_RING_WIDTH
+	)
 
 func _draw_player() -> void:
 	var forward: Vector2 = Vector2.from_angle(player_draw_angle)
