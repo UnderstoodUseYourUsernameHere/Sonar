@@ -30,6 +30,12 @@ const MONSTER_STALK_DISTANCE_START: int = 6
 const MONSTER_STALK_DISTANCE_MIN: int = 2
 const MONSTER_STALK_CREEP_SECONDS: float = 3.0
 
+const AWARENESS_HUNT_THRESHOLD: float = 1.0
+const AWARENESS_AFTER_LOST_HUNT: float = 0.3
+const MONSTER_HUNT_MOVE_TIME: float = 0.11 
+const MONSTER_HUNT_LOSE_SECONDS: float = 2.5
+const MONSTER_HUNT_PROXIMITY_TILES: float = 2.0
+
 const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
 const WALL_FLASH_DURATION: float = 1.2
 
@@ -40,7 +46,7 @@ const MONSTER_ROAM_MIN_DISTANCE: int = 8
 const MONSTER_ROAM_ATTEMPTS: int = 40
 
 const MONSTER_ROAM_MOVE_TIME: float = 0.26
-const MONSTER_INVESTIGATE_MOVE_TIME: float = 0.12
+const MONSTER_INVESTIGATE_MOVE_TIME: float = 0.18
 const MONSTER_SEARCH_MOVE_TIME: float = 0.20
 
 const MONSTER_SEARCH_DURATION: float = 4.5 
@@ -106,7 +112,8 @@ enum MonsterState {
 	ROAMING,
 	INVESTIGATING,
 	SEARCHING,
-	STALKING
+	STALKING,
+	HUNTING
 }
 
 var map_width: int = 0
@@ -170,6 +177,9 @@ var monster_snapshot_time: float = -1000.0
 var monster_stalk_target: Vector2i = Vector2i.ZERO
 var monster_stalk_distance: int = MONSTER_STALK_DISTANCE_START
 var monster_stalk_creep_remaining: float = 0.0
+
+var monster_hunt_target: Vector2i = Vector2i.ZERO
+var monster_hunt_lose_remaining: float = 0.0
 
 var card_cell: Vector2i = Vector2i.ZERO
 var card_draw_position: Vector2 = Vector2.ZERO
@@ -384,6 +394,8 @@ func _monster_move_time_for_state() -> float:
 			return MONSTER_SEARCH_MOVE_TIME
 		MonsterState.STALKING:
 			return MONSTER_STALK_MOVE_TIME
+		MonsterState.HUNTING:
+			return MONSTER_HUNT_MOVE_TIME
 		_:
 			return MONSTER_ROAM_MOVE_TIME
 
@@ -505,6 +517,33 @@ func _update_monster_stalking(delta: float) -> void:
 		if monster_stalk_distance > MONSTER_STALK_DISTANCE_MIN:
 			monster_stalk_distance -= 1
 			monster_needs_new_path = true
+		else:
+			_begin_monster_hunting(monster_stalk_target)
+
+func _begin_monster_hunting(target_cell: Vector2i) -> void:
+	monster_state = MonsterState.HUNTING
+	monster_awareness = 1.0
+	monster_hunt_target = target_cell
+	monster_hunt_lose_remaining = MONSTER_HUNT_LOSE_SECONDS
+	monster_path.clear()
+	monster_needs_new_path = true
+
+func _update_monster_hunting(delta: float) -> void:
+	if is_monster_moving:
+		return
+	
+	if monster_needs_new_path:
+		_set_monster_path(monster_hunt_target)
+		monster_needs_new_path = false
+		return
+	
+	if not monster_path.is_empty():
+		return
+	
+	monster_hunt_lose_remaining -= delta
+	if monster_hunt_lose_remaining <= 0.0:
+		monster_awareness = AWARENESS_AFTER_LOST_HUNT
+		_begin_monster_search(monster_hunt_target)
 
 func _pick_monster_search_target() -> Vector2i:
 	var candidates: Array[Vector2i] = []
@@ -763,6 +802,8 @@ func _update_monster_ai(delta: float) -> void:
 	var decay_rate: float = AWARENESS_DECAY_PER_SECOND
 	if monster_state == MonsterState.STALKING:
 		decay_rate = AWARENESS_DECAY_PER_SECOND
+	elif monster_state == MonsterState.HUNTING:
+		decay_rate = 0.0
 	monster_awareness = maxf(monster_awareness - AWARENESS_DECAY_PER_SECOND * delta, 0.0)
 	
 	if last_noise_time > monster_last_heard_noise_time:
@@ -783,11 +824,20 @@ func _update_monster_ai(delta: float) -> void:
 		
 		MonsterState.STALKING:
 			_update_monster_stalking(delta)
+		
+		MonsterState.HUNTING:
+			_update_monster_hunting(delta)
 
 func _on_monster_heard_noise() -> void:
 	monster_awareness = minf(monster_awareness + last_noise_loudness, 1.0)
 	
-	if monster_awareness >= AWARENESS_STALK_THRESHOLD:
+	var noise_distance: float = monster_draw_position.distance_to(_cell_center(last_noise_cell))
+	var noise_is_close: bool = noise_distance <= MONSTER_HUNT_PROXIMITY_TILES * TILE_SIZE
+	var stalking_and_close: bool = monster_state == MonsterState.STALKING and noise_is_close
+	
+	if monster_awareness >= AWARENESS_HUNT_THRESHOLD or stalking_and_close:
+		_begin_monster_hunting(last_noise_cell)
+	elif monster_awareness >= AWARENESS_STALK_THRESHOLD:
 		_begin_monster_stalking(last_noise_cell)
 	else:
 		_begin_monster_investigation(last_noise_cell)
@@ -1139,6 +1189,9 @@ func _draw_monster_ai_debug() -> void:
 				Color(marker_color, 0.25),
 				1.0, true
 			)
+		MonsterState.HUNTING:
+			target_center = _cell_center(monster_hunt_target)
+			marker_color = Color(1.0, 0.1, 0.1, 1.0)
 		_:
 			return
 	
