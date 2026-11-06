@@ -42,6 +42,9 @@ const SENSE_COLOR: Color = Color(1.0, 0.25, 0.30, 1.0)
 const AWARENESS_PER_PING: float = 0.45
 const AWARENESS_PER_FOOTSTEP: float = 0.06
 const AWARENESS_DECAY_PER_SECOND: float = 0.04
+
+const AWARENESS_FALLOFF_TILES: float = 10.0
+const AWARENESS_FALLOFF_FLOOR: float = 0.15
  
 const AWARENESS_STALK_THRESHOLD: float = 0.5 ## Enters stalking above this
 const AWARENESS_STALK_EXIT: float = 0.25 ## Exits stalking below this
@@ -91,7 +94,7 @@ const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
 const EXIT_DIM_ALPHA: float = 0.30
 const EXIT_FLASH_DURATION: float = 1.0
 
-const DEBUG_SHOW_MONSTER: bool = false
+const DEBUG_SHOW_MONSTER: bool = true
 
 const MAP_ROWS: Array[String] = [
 	"################################",
@@ -903,7 +906,7 @@ func _update_monster_ai(delta: float) -> void:
 		decay_rate = AWARENESS_STALK_DECAY_PER_SECOND
 	elif monster_state == MonsterState.HUNTING:
 		decay_rate = 0.0
-	monster_awareness = maxf(monster_awareness - AWARENESS_DECAY_PER_SECOND * delta, 0.0)
+	monster_awareness = maxf(monster_awareness - decay_rate * delta, 0.0)
 	
 	if last_noise_time > monster_last_heard_noise_time:
 		monster_last_heard_noise_time = last_noise_time
@@ -928,11 +931,13 @@ func _update_monster_ai(delta: float) -> void:
 			_update_monster_hunting(delta)
 
 func _on_monster_heard_noise() -> void:
-	monster_awareness = minf(monster_awareness + last_noise_loudness, 1.0)
 	
 	var noise_distance: float = monster_draw_position.distance_to(_cell_center(last_noise_cell))
 	var noise_is_close: bool = noise_distance <= MONSTER_HUNT_PROXIMITY_TILES * TILE_SIZE
 	var stalking_and_close: bool = monster_state == MonsterState.STALKING and noise_is_close
+	
+	var falloff: float = clampf(1.0 - (noise_distance / TILE_SIZE) / AWARENESS_FALLOFF_TILES, AWARENESS_FALLOFF_FLOOR, 1.0)
+	monster_awareness = minf(monster_awareness + last_noise_loudness * falloff, 1.0)
 	
 	if monster_awareness >= AWARENESS_HUNT_THRESHOLD or stalking_and_close:
 		_begin_monster_hunting(last_noise_cell)
