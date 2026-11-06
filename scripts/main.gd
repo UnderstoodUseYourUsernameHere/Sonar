@@ -52,19 +52,24 @@ const AWARENESS_STALK_DECAY_PER_SECOND: float = 0.02
 
 const MONSTER_STALK_MOVE_TIME: float = 0.16
 const MONSTER_STALK_DISTANCE_START: int = 6
-const MONSTER_STALK_DISTANCE_MIN: int = 2
-const MONSTER_STALK_CREEP_SECONDS: float = 3.0
+const MONSTER_STALK_DISTANCE_MIN: int = 3
+const MONSTER_STALK_CREEP_SECONDS: float = 4.5
+
+const MONSTER_STALK_BACKOFF_SECONDS: float = 6.0 ## How long it takes for the monster to backoff if the player remains silent for this amount of seconds
+const MONSTER_STALK_NOISE_CREEP_BONUS: float = 2.0 ## Every noise it hears while stalking removes this amount from the creep timer
+const MONSTER_LUNGE_PAUSE: float = 1.1 ## How long the monster takes to switch to hunting, but visually
+const MONSTER_LUNGE_RING_COLOR: Color = Color(1.0, 0.15, 0.2, 1.0)
 
 const AWARENESS_HUNT_THRESHOLD: float = 1.0
 const AWARENESS_AFTER_LOST_HUNT: float = 0.3
-const MONSTER_HUNT_MOVE_TIME: float = 0.11 
+const MONSTER_HUNT_MOVE_TIME: float = 0.15 
 const MONSTER_HUNT_LOSE_SECONDS: float = 2.5
 const MONSTER_HUNT_PROXIMITY_TILES: float = 2.0
+const MONSTER_ATTACK_TRIGGER_DISTANCE: float = TILE_SIZE * 0.9
+const MONSTER_ATTACK_WINDUP: float = 0.3
 
 const WALL_DIM_SEEN_ALPHA: float = 0.18 ## A wall thats been seen before never dims below this(its going to be an alpha, sigma oh my god!!!!)
 const WALL_FLASH_DURATION: float = 1.2
-
-const MONSTER_CATCH_DISTANCE: float = TILE_SIZE * 0.30
 
 const MONSTER_ROAM_WAIT: float = 0.75
 const MONSTER_ROAM_MIN_DISTANCE: int = 8
@@ -94,7 +99,7 @@ const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
 const EXIT_DIM_ALPHA: float = 0.30
 const EXIT_FLASH_DURATION: float = 1.0
 
-const DEBUG_SHOW_MONSTER: bool = true
+const DEBUG_SHOW_MONSTER: bool = false
 
 const MAP_ROWS: Array[String] = [
 	"################################",
@@ -218,9 +223,16 @@ var monster_sense_confidence: float = 0.0
 var monster_stalk_target: Vector2i = Vector2i.ZERO
 var monster_stalk_distance: int = MONSTER_STALK_DISTANCE_START
 var monster_stalk_creep_remaining: float = 0.0
+var monster_stalk_quiet_time: float = 0.0
+
+var monster_lunge_remaining: float = 0.0
+var monster_lunge_start_time: float = -1000.0
 
 var monster_hunt_target: Vector2i = Vector2i.ZERO
 var monster_hunt_lose_remaining: float = 0.0
+var monster_is_attacking: bool = false
+var monster_attack_remaining: float = 0.0
+var monster_attack_start_time: float = -1000.0
 
 var card_cell: Vector2i = Vector2i.ZERO
 var card_draw_position: Vector2 = Vector2.ZERO
@@ -256,24 +268,34 @@ func _ready() -> void:
 	
 	monster_path.clear()
 	monster_roam_wait_remaining = 0.5
-	
-	if monster_path.is_empty():
-		push_warning("No monster route was found at beginning?")
-	print("Offsets: ", monster_dot_offsets.size(), " | Sizes: ", monster_dot_sizes.size())
-	print("Debug path: ", monster_path)
 	queue_redraw()
 
-func _check_player_caught() -> void:
+func _check_player_caught(delta: float) -> void:
 	if game_over:
 		return
 	
 	var distance: float = player_draw_position.distance_to(monster_draw_position)
-	if distance > MONSTER_CATCH_DISTANCE:
+	if monster_is_attacking:
+		monster_attack_remaining -= delta
+		
+		if monster_attack_remaining > 0.0:
+			return
+		
+		if distance <= MONSTER_ATTACK_TRIGGER_DISTANCE:
+			game_over = true
+			active_pulses.clear()
+			monster_path.clear()
+			return
+		
+		monster_is_attacking = false
+		_begin_monster_hunting(player_cell)
 		return
-	
-	game_over = true
-	active_pulses.clear()
-	monster_path.clear()
+		
+	if distance <= MONSTER_ATTACK_TRIGGER_DISTANCE:
+		monster_is_attacking = true
+		monster_attack_remaining = MONSTER_ATTACK_WINDUP
+		monster_attack_start_time = game_time
+		monster_path.clear()
 
 func _draw_game_over() -> void:
 	var screen_size: Vector2 = Vector2(
@@ -296,7 +318,7 @@ func _draw_game_over() -> void:
 		HORIZONTAL_ALIGNMENT_CENTER,
 		screen_size.x,
 		42,
-		Color(1.0, 0.25, 0.25, 1.0)
+		Color(1.0, 0.30, 0.25, 1.0)
 	)
 	
 	draw_string(
@@ -460,6 +482,9 @@ func _pick_roam_target() -> Vector2i:
 	return walkable_cells[fallback_index]
 
 func _update_monster_movement(delta: float) -> void:
+	if monster_is_attacking and not is_monster_moving:
+		return
+	
 	if is_monster_moving:
 		monster_move_elapsed += delta
 		
@@ -525,6 +550,8 @@ func _begin_monster_stalking(target_cell: Vector2i) -> void:
 	if monster_state != MonsterState.STALKING:
 		monster_stalk_distance = MONSTER_STALK_DISTANCE_START
 		monster_stalk_creep_remaining = MONSTER_STALK_CREEP_SECONDS
+		monster_stalk_quiet_time = 0.0
+		monster_lunge_remaining = 0.0
 	
 	monster_state = MonsterState.STALKING
 	monster_stalk_target = target_cell
@@ -537,9 +564,20 @@ func _set_monster_stalk_path() -> void:
 	monster_path.resize(kept_steps)
 
 func _update_monster_stalking(delta: float) -> void:
+	if monster_lunge_remaining > 0.0:
+		monster_lunge_remaining -= delta
+		monster_path.clear()
+		
+		if monster_lunge_remaining <= 0.0:
+			_begin_monster_hunting(player_cell)
+			
+		return
+	
 	if monster_awareness < AWARENESS_STALK_EXIT:
 		_begin_monster_search(monster_cell) ## If it loses interest it looks around where it is then wanders away
 		return
+		
+	monster_stalk_quiet_time += delta
 	
 	if is_monster_moving:
 		return
@@ -551,6 +589,16 @@ func _update_monster_stalking(delta: float) -> void:
 	
 	if not monster_path.is_empty():
 		return
+		
+	if monster_stalk_quiet_time >= MONSTER_STALK_BACKOFF_SECONDS:
+		monster_stalk_quiet_time = 0.0
+		monster_stalk_creep_remaining = MONSTER_STALK_CREEP_SECONDS
+			
+		if monster_stalk_distance < MONSTER_STALK_DISTANCE_START:
+			monster_stalk_distance += 1
+			monster_needs_new_path = true
+			
+		return
 	
 	monster_stalk_creep_remaining -= delta
 	if monster_stalk_creep_remaining <= 0.0:
@@ -560,7 +608,9 @@ func _update_monster_stalking(delta: float) -> void:
 			monster_stalk_distance -= 1
 			monster_needs_new_path = true
 		else:
-			_begin_monster_hunting(monster_stalk_target)
+			monster_lunge_remaining = MONSTER_LUNGE_PAUSE
+			monster_lunge_start_time = game_time
+			monster_path.clear()
 
 func _begin_monster_hunting(target_cell: Vector2i) -> void:
 	monster_state = MonsterState.HUNTING
@@ -705,7 +755,7 @@ func _process(delta: float) -> void:
 	_update_proximity_sense()
 	_update_monster_ai(delta)
 	_check_card_collection()
-	_check_player_caught()
+	_check_player_caught(delta)
 	_check_for_victory()
 	
 	queue_redraw()
@@ -901,6 +951,9 @@ func _update_proximity_sense() -> void:
 	monster_sense_confidence = closeness
 
 func _update_monster_ai(delta: float) -> void:
+	if monster_is_attacking:
+		return
+		
 	var decay_rate: float = AWARENESS_DECAY_PER_SECOND
 	if monster_state == MonsterState.STALKING:
 		decay_rate = AWARENESS_STALK_DECAY_PER_SECOND
@@ -931,13 +984,21 @@ func _update_monster_ai(delta: float) -> void:
 			_update_monster_hunting(delta)
 
 func _on_monster_heard_noise() -> void:
-	
+	if monster_state == MonsterState.HUNTING and last_noise_loudness < AWARENESS_PER_PING:
+		return
 	var noise_distance: float = monster_draw_position.distance_to(_cell_center(last_noise_cell))
 	var noise_is_close: bool = noise_distance <= MONSTER_HUNT_PROXIMITY_TILES * TILE_SIZE
 	var stalking_and_close: bool = monster_state == MonsterState.STALKING and noise_is_close
 	
 	var falloff: float = clampf(1.0 - (noise_distance / TILE_SIZE) / AWARENESS_FALLOFF_TILES, AWARENESS_FALLOFF_FLOOR, 1.0)
 	monster_awareness = minf(monster_awareness + last_noise_loudness * falloff, 1.0)
+	
+	if monster_state == MonsterState.STALKING:
+		monster_stalk_quiet_time = 0.0
+		monster_stalk_creep_remaining -= MONSTER_STALK_NOISE_CREEP_BONUS
+		
+		if monster_lunge_remaining > 0.0:
+			return
 	
 	if monster_awareness >= AWARENESS_HUNT_THRESHOLD or stalking_and_close:
 		_begin_monster_hunting(last_noise_cell)
@@ -1053,6 +1114,8 @@ func _draw() -> void:
 	_draw_sense_arcs()
 	_draw_sense_contact()
 	_draw_monster_snapshot()
+	_draw_monster_lunge()
+	_draw_monster_attack()
 	
 	if DEBUG_SHOW_MONSTER:
 		_draw_debug_path()
@@ -1310,6 +1373,50 @@ func _draw_sense_contact() -> void:
 	var alpha: float  = fade * lerpf(0.20, 0.75, monster_sense_confidence)
 	
 	_draw_monster_at(monster_sense_position, alpha)
+
+func _draw_monster_lunge() -> void:
+	if monster_lunge_remaining <= 0.0:
+		return
+	
+	var age: float = game_time - monster_lunge_start_time
+	var progress: float = clampf(age / MONSTER_LUNGE_PAUSE, 0.0, 1.0)
+	
+	var radius: float = lerpf(TILE_SIZE * 2.6, TILE_SIZE * 0.4, progress)
+	var ring_alpha: float = 0.35 + progress * 0.5
+	var monster_alpha: float = 0.4 + progress * 0.5
+	
+	draw_arc(
+		monster_draw_position,
+		radius,
+		0.0,
+		TAU,
+		40,
+		Color(MONSTER_LUNGE_RING_COLOR, ring_alpha),
+		2.0,
+		true
+	)
+	
+	_draw_monster_at(monster_draw_position, monster_alpha)
+
+func _draw_monster_attack() -> void:
+	if not monster_is_attacking:
+		return
+	
+	var age: float = game_time - monster_attack_start_time
+	var progress: float = clampf(age / MONSTER_ATTACK_WINDUP, 0.0, 1.0)
+	
+	draw_arc(
+		monster_draw_position,
+		MONSTER_ATTACK_TRIGGER_DISTANCE,
+		0.0,
+		TAU,
+		32,
+		Color(MONSTER_LUNGE_RING_COLOR, 0.4 + progress * 0.6),
+		3.0,
+		true
+	)
+	
+	_draw_monster_at(monster_draw_position, 1.0)
 
 func _draw_monster_ai_debug() -> void:
 	var target_center: Vector2
