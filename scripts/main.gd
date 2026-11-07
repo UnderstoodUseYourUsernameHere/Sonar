@@ -27,7 +27,7 @@ const PING_NOISE_RANGE_TILES: float = 11.0 ## How far the monster can hear a pin
 const FOOTSTEP_NOISE_RANGE_TILES: float = 2.5 ## I think this might be TOO HIGH, but also i dont care, but also i do care...
 const FOOTSTEP_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
 
-const SENSE_RANGE_TILES: float = 7.0 ## When its actively hunting
+const SENSE_RANGE_TILES: float = 8.0 ## When its actively hunting
 const SENSE_RANGE_QUIET_TILES: float = 4.0 ## Wandering
 const SENSE_INTERVAL_FAR: float = 0.9
 const SENSE_INTERVAL_NEAR: float = 0.22
@@ -50,12 +50,12 @@ const AWARENESS_STALK_THRESHOLD: float = 0.5 ## Enters stalking above this
 const AWARENESS_STALK_EXIT: float = 0.25 ## Exits stalking below this
 const AWARENESS_STALK_DECAY_PER_SECOND: float = 0.02
 
-const MONSTER_STALK_MOVE_TIME: float = 0.16
-const MONSTER_STALK_DISTANCE_START: int = 6
+const MONSTER_STALK_MOVE_TIME: float = 0.17
+const MONSTER_STALK_DISTANCE_START: int = 5
 const MONSTER_STALK_DISTANCE_MIN: int = 3
-const MONSTER_STALK_CREEP_SECONDS: float = 4.5
+const MONSTER_STALK_CREEP_SECONDS: float = 3.5
 
-const MONSTER_STALK_BACKOFF_SECONDS: float = 6.0 ## How long it takes for the monster to backoff if the player remains silent for this amount of seconds
+const MONSTER_STALK_BACKOFF_SECONDS: float = 8.0 ## How long it takes for the monster to backoff if the player remains silent for this amount of seconds
 const MONSTER_STALK_NOISE_CREEP_BONUS: float = 2.0 ## Every noise it hears while stalking removes this amount from the creep timer
 const MONSTER_LUNGE_PAUSE: float = 1.1 ## How long the monster takes to switch to hunting, but visually
 const MONSTER_LUNGE_RING_COLOR: Color = Color(1.0, 0.15, 0.2, 1.0)
@@ -204,6 +204,9 @@ var map_is_valid: bool = false
 
 var map_rows: Array[String] = []
 var map_rng: RandomNumberGenerator = RandomNumberGenerator.new()
+static var retry_map_seed: int = 0
+static var retry_map_seed_is_set: bool = false
+var current_map_seed: int = 0
 
 var player_cell: Vector2i = Vector2i.ZERO
 var player_draw_position: Vector2 = Vector2.ZERO
@@ -300,7 +303,12 @@ var astar: AStarGrid2D = AStarGrid2D.new() ## I really like this name for some r
 var monster_path: Array[Vector2i] = []
 
 func _ready() -> void:
-	map_rng.randomize()
+	if retry_map_seed_is_set:
+		map_rng.seed = retry_map_seed
+		retry_map_seed_is_set = false
+	else:
+		map_rng.randomize()
+	current_map_seed = map_rng.seed
 	
 	if USE_PROCEDURAL_MAP:
 		map_rows = _generate_map()
@@ -772,6 +780,9 @@ func _update_monster_movement(delta: float) -> void:
 			monster_draw_position = monster_move_destination
 			is_monster_moving = false
 	
+	if monster_listen_remaining > 0.0 and not is_monster_moving:
+		return
+	
 	if not is_monster_moving and not monster_path.is_empty():
 		monster_move_destination_cell = monster_path.pop_front()
 		monster_move_source = monster_draw_position
@@ -985,6 +996,8 @@ func _process(delta: float) -> void:
 	
 	if game_over or has_won:
 		if Input.is_action_just_pressed("restart"):
+			retry_map_seed = current_map_seed
+			retry_map_seed_is_set = true
 			get_tree().reload_current_scene()
 		
 		queue_redraw()
@@ -1939,6 +1952,21 @@ func _draw_hud() -> void:
 		500.0,
 		16,
 		Color(0.75, 1.0, 0.82, 0.9)
+	)
+	
+	var map_label: String = "MAP %d" % current_map_seed
+	
+	if not USE_PROCEDURAL_MAP:
+		map_label = "TEST MAP"
+	
+	draw_string(
+		font,
+		Vector2(0.0, 28.0),
+		map_label,
+		HORIZONTAL_ALIGNMENT_RIGHT,
+		map_width * TILE_SIZE - 18.0,
+		12,
+		Color(0.75, 1.0, 0.82, 0.75)
 	)
 	
 	_draw_ping_cooldown()
