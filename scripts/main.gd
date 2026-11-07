@@ -88,18 +88,21 @@ const MONSTER_GUARD_RADIUS: int = 5
 
 const MONSTER_ROAM_MOVE_TIME: float = 0.26
 const MONSTER_INVESTIGATE_MOVE_TIME: float = 0.18
-const MONSTER_SEARCH_MOVE_TIME: float = 0.20
+const MONSTER_SEARCH_MOVE_TIME: float = 0.16
 
-const MONSTER_SEARCH_DURATION: float = 4.5 
-const MONSTER_SEARCH_RADIUS: int = 3
+const MONSTER_SEARCH_DURATION: float = 5.5 
+const MONSTER_SEARCH_RADIUS: int = 4
 const MONSTER_SEARCH_WAIT: float = 0.25
 const MONSTER_SNAPSHOT_FADE_DURATION: float = 1.5
 
 const MONSTER_COLOR: Color = Color(0.85, 0.12, 0.15, 1.0)
-const MONSTER_DOT_COUNT: int = 11
-const MONSTER_DOT_COUNT_VARIANCE: int = 3
+const MONSTER_DOT_COUNT: int = 13
+const MONSTER_DOT_COUNT_VARIANCE: int = 5
 const MONSTER_CLUSTER_RADIUS: float = TILE_SIZE * 0.38
 const MONSTER_SCAN_RADIUS: float  = TILE_SIZE * 0.42
+
+const MONSTER_SCAN_RETURN_COLOR: Color = Color(1.0, 0.12, 0.20, 1.0)
+const MONSTER_SCAN_RETURN_DURATION: float = 3.0
 
 
 const CARD_COLOR: Color = Color(1.0, 0.82, 0.18, 1.0)
@@ -144,6 +147,7 @@ class ScanPoint:
 	var tangent: Vector2
 	var distance: float = 0.0
 	var born_time: float = 0.0
+	var is_monster_return: bool = false
 
 class SonarPulse:
 	var origin: Vector2
@@ -154,6 +158,10 @@ class SonarPulse:
 	var next_hit_index: int = 0
 	var wave_directions: PackedVector2Array = PackedVector2Array()
 	var wave_stop_distances: PackedFloat32Array = PackedFloat32Array()
+	var monster_position_at_ping: Vector2 = Vector2.ZERO
+	var monster_center_distance_at_ping: float = INF
+	var monster_scan_was_hit: bool = false
+	var monster_snapshot_revealed: bool = false
 	
 	func _init(start_origin: Vector2, start_cell: Vector2i) -> void:
 		origin = start_origin
@@ -328,7 +336,7 @@ func _draw_game_over() -> void:
 	
 	draw_rect(
 		Rect2(Vector2.ZERO, screen_size),
-		Color(0.2, 0.0, 0.0, 0.72),
+		Color(0.3, 0.0, 0.0, 0.70),
 		true
 	)
 	
@@ -341,7 +349,7 @@ func _draw_game_over() -> void:
 		HORIZONTAL_ALIGNMENT_CENTER,
 		screen_size.x,
 		42,
-		Color(1.0, 0.30, 0.25, 1.0)
+		Color(1.0, 0.20, 0.25, 1.0)
 	)
 	
 	draw_string(
@@ -946,8 +954,8 @@ func _cast_scan_ray(origin: Vector2, direction: Vector2, max_distance: float) ->
 			return point
 	return null
 
-func _monster_ray_hit_distance(origin: Vector2, direction: Vector2) -> float:
-	var to_monster: Vector2 = monster_draw_position - origin
+func _monster_ray_hit_distance(origin: Vector2, direction: Vector2, monster_position: Vector2) -> float:
+	var to_monster: Vector2 = monster_position - origin
 	var along: float = to_monster.dot(direction)
 	
 	if along <= 0.0:
@@ -980,10 +988,22 @@ func _build_pulse_hits(pulse: SonarPulse) -> void:
 		if hit != null:
 			wall_distance = hit.distance
 			
-		var monster_distance: float = _monster_ray_hit_distance(pulse.origin, direction)
+		var monster_distance: float = _monster_ray_hit_distance(pulse.origin, direction, pulse.monster_position_at_ping)
 			
 		if monster_distance < wall_distance:
 			pulse.wave_stop_distances.append(monster_distance)
+			var return_point: ScanPoint = ScanPoint.new()
+			return_point.position = pulse.origin + direction * monster_distance
+			
+			var outward: Vector2 = (
+				return_point.position - pulse.monster_position_at_ping
+			).normalized()
+			return_point.tangent = Vector2(-outward.y, outward.x)
+			
+			return_point.distance = monster_distance
+			return_point.is_monster_return = true
+			pulse.hits.append(return_point)
+			pulse.monster_scan_was_hit = true
 			continue
 		
 		if hit == null:
@@ -1008,6 +1028,8 @@ func _try_emit_ping() -> void:
 	var origin_cell: Vector2i = _cell_from_position(origin)
 	
 	var pulse: SonarPulse = SonarPulse.new(origin, origin_cell)
+	pulse.monster_position_at_ping = monster_draw_position
+	pulse.monster_center_distance_at_ping = origin.distance_to(pulse.monster_position_at_ping)
 	_build_pulse_hits(pulse)
 	active_pulses.append(pulse)
 		
@@ -1159,7 +1181,16 @@ func _reveal_scan_for_pulse(pulse: SonarPulse) -> void:
 
 func _update_scan_points() -> void:
 	var total_life: float = WALL_FLASH_DURATION + SCAN_HOLD_DURATION + SCAN_FADE_DURATION
-	while not scan_points.is_empty() and game_time - scan_points[0].born_time >= total_life:
+	while not scan_points.is_empty():
+		var oldest_point: ScanPoint = scan_points[0]
+		var point_lifetime: float = total_life
+		
+		if oldest_point.is_monster_return:
+			point_lifetime = MONSTER_SCAN_RETURN_DURATION
+		
+		if game_time - oldest_point.born_time < point_lifetime:
+			break
+		
 		scan_points.remove_at(0)
 	
 	while scan_points.size() > SCAN_MAX_POINTS:
@@ -1199,24 +1230,22 @@ func _reveal_exit_for_pulse(pulse: SonarPulse) -> void:
 	exit_last_lit_time = game_time
  
 func _reveal_monster_for_pulse(pulse: SonarPulse) -> void:
-	var distance: float = pulse.origin.distance_to(monster_draw_position)
-	var ring_reached_monster: bool = (
-		distance > pulse.previous_radius
-		and distance <= pulse.radius
+	if not pulse.monster_scan_was_hit:
+		return
+	
+	if pulse.monster_snapshot_revealed:
+		return
+	
+	var surface_distance: float = maxf(
+		pulse.monster_center_distance_at_ping - MONSTER_SCAN_RADIUS, 0.0
 	)
-	if not ring_reached_monster:
+	
+	if surface_distance > pulse.radius:
 		return
 	
-	var current_monster_cell: Vector2i = _cell_from_position(monster_draw_position)
-	
-	if not _has_line_of_sight(
-		pulse.origin_cell,
-		current_monster_cell
-	):
-		return
-	
+	pulse.monster_snapshot_revealed = true
 	_build_monster_shape()
-	monster_snapshot_position = monster_draw_position
+	monster_snapshot_position = pulse.monster_position_at_ping
 	monster_snapshot_time = game_time
 
 func _check_card_collection() -> void:
@@ -1318,7 +1347,17 @@ func _draw_scan_points() -> void:
 		
 		segments[index * 2] = point.position - half_segment
 		segments[index * 2 + 1] = point.position + half_segment
-		colors[index] = Color(WALL_COLOR, _scan_point_alpha(game_time - point.born_time))
+		var point_age: float = game_time - point.born_time
+		
+		if point.is_monster_return:
+			var return_alpha: float = clampf(
+				1.0 - point_age / MONSTER_SCAN_RETURN_DURATION,
+				0.0,
+				1.0
+			)
+			colors[index] = Color(MONSTER_SCAN_RETURN_COLOR, return_alpha)
+		else:
+			colors[index] = Color(WALL_COLOR, _scan_point_alpha(point_age))
 		
 	draw_multiline_colors(segments, colors, SCAN_POINT_WIDTH)
 
