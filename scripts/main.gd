@@ -101,9 +101,10 @@ const MONSTER_DOT_COUNT_VARIANCE: int = 5
 const MONSTER_CLUSTER_RADIUS: float = TILE_SIZE * 0.38
 const MONSTER_SCAN_RADIUS: float  = TILE_SIZE * 0.42
 
+const MONSTER_LISTEN_PAUSE: float = 0.7
+
 const MONSTER_SCAN_RETURN_COLOR: Color = Color(1.0, 0.12, 0.20, 1.0)
 const MONSTER_SCAN_RETURN_DURATION: float = 3.0
-
 
 const CARD_COLOR: Color = Color(1.0, 0.82, 0.18, 1.0)
 const CARD_DIM_ALPHA: float = 0.30
@@ -263,6 +264,7 @@ var monster_hunt_lose_remaining: float = 0.0
 var monster_is_attacking: bool = false
 var monster_attack_remaining: float = 0.0
 var monster_attack_start_time: float = -1000.0
+var monster_listen_remaining: float = 0.0
 
 var card_cell: Vector2i = Vector2i.ZERO
 var card_draw_position: Vector2 = Vector2.ZERO
@@ -526,6 +528,12 @@ func _pick_roam_target() -> Vector2i:
 func _update_monster_movement(delta: float) -> void:
 	if monster_is_attacking and not is_monster_moving:
 		return
+	
+	if monster_listen_remaining > 0.0:
+		monster_listen_remaining -= delta
+		
+		if not is_monster_moving:
+			return
 	
 	if is_monster_moving:
 		monster_move_elapsed += delta
@@ -1153,6 +1161,9 @@ func _on_monster_heard_noise() -> void:
 	
 	var falloff: float = clampf(1.0 - (noise_distance / TILE_SIZE) / AWARENESS_FALLOFF_TILES, AWARENESS_FALLOFF_FLOOR, 1.0)
 	monster_awareness = minf(monster_awareness + last_noise_loudness * falloff, 1.0)
+	
+	if last_noise_loudness >= AWARENESS_PER_PING and monster_state != MonsterState.HUNTING:
+		monster_listen_remaining = MONSTER_LISTEN_PAUSE
 	
 	if monster_state == MonsterState.STALKING:
 		monster_stalk_quiet_time = 0.0
