@@ -15,7 +15,7 @@ const WALL_COLOR: Color = Color(0.12, 0.90, 0.38, 1.0)
 const PLAYER_COLOR: Color = Color(0.96, 0.98, 1.0, 1.0)
 
 const PLAYER_TURN_SPEED: float = 25.0
-const PLAYER_STRETCH: float = 0.3
+const PLAYER_STRETCH: float = 0.12
 
 const PING_SPEED: float = 200.0 ## This is how fast the ring/circle grows 
 const PING_MAX_RADIUS: float = 10.5 * TILE_SIZE
@@ -84,6 +84,8 @@ const MONSTER_ROAM_MIN_DISTANCE: int = 8
 const MONSTER_ROAM_ATTEMPTS: int = 40
 
 const MONSTER_GUARD_CHANCE: float = 0.40
+const MONSTER_GUARD_CHANCE_PER_SECTOR: float = 0.40
+const MONSTER_GUARD_CHANCE_MAX: float = 0.56
 const MONSTER_GUARD_RADIUS: int = 5
 
 const MONSTER_ROAM_MOVE_TIME: float = 0.26
@@ -115,7 +117,7 @@ const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
 const EXIT_DIM_ALPHA: float = 0.30
 const EXIT_FLASH_DURATION: float = 1.0
 
-const DEBUG_SHOW_MONSTER: bool = true
+const DEBUG_SHOW_MONSTER: bool = false
 
 const TEST_MAP_ROWS: Array[String] = [
 	"################################",
@@ -735,7 +737,7 @@ func _pick_roam_target() -> Vector2i:
 	if walkable_cells.is_empty():
 		return monster_cell
 	
-	if monster_rng.randf() < MONSTER_GUARD_CHANCE:
+	if monster_rng.randf() < _monster_guard_chance_for_level():
 		var objective_cell: Vector2i = card_cell
 		
 		if has_access_card:
@@ -759,6 +761,11 @@ func _pick_roam_target() -> Vector2i:
 	var fallback_index: int = monster_rng.randi_range(0, walkable_cells.size()- 1)
 	
 	return walkable_cells[fallback_index]
+
+func _monster_guard_chance_for_level() -> float:
+	var levels_after_first: int = campaign_level - 1
+	
+	return minf(MONSTER_GUARD_CHANCE + float(levels_after_first) * MONSTER_GUARD_CHANCE_PER_SECTOR, MONSTER_GUARD_CHANCE_MAX)
 
 func _update_monster_movement(delta: float) -> void:
 	if monster_is_attacking and not is_monster_moving:
