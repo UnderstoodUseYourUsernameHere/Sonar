@@ -143,6 +143,21 @@ const TEST_MAP_ROWS: Array[String] = [
 	"#..........#...........#.......#",
 	"################################"
 ]
+
+const USE_PROCEDURAL_MAP: bool = true
+const GEN_WIDTH: int = 32
+const GEN_HEIGHT: int = 24
+const GEN_MAP_ATTEMPTS: int = 50
+const GEN_ROOM_ATTEMPTS: int = 120
+const GEN_MIN_ROOMS: int = 6
+const GEN_MAX_ROOMS: int = 11
+const GEN_ROOM_MIN_WIDTH: int = 4
+const GEN_ROOM_MAX_WIDTH: int = 8
+const GEN_ROOM_MIN_HEIGHT: int = 3
+const GEN_ROOM_MAX_HEIGHT: int = 6
+const GEN_EXTRA_LOOPS: int = 3
+const GEN_MIN_ENTRANCE_TO_CARD: int = 18
+
 class ScanPoint:
 	var position: Vector2
 	var tangent: Vector2
@@ -188,6 +203,7 @@ var map_height: int = 0
 var map_is_valid: bool = false
 
 var map_rows: Array[String] = []
+var map_rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
 var player_cell: Vector2i = Vector2i.ZERO
 var player_draw_position: Vector2 = Vector2.ZERO
@@ -284,7 +300,13 @@ var astar: AStarGrid2D = AStarGrid2D.new() ## I really like this name for some r
 var monster_path: Array[Vector2i] = []
 
 func _ready() -> void:
-	map_rows = TEST_MAP_ROWS
+	map_rng.randomize()
+	
+	if USE_PROCEDURAL_MAP:
+		map_rows = _generate_map()
+	else:
+		map_rows = TEST_MAP_ROWS
+		
 	if not _parse_map():
 		set_process(false)
 		return
@@ -467,6 +489,200 @@ func _parse_map() -> bool:
 	if exit_count != 1:
 		push_error("Expected exactly one X exit marker but found %d!" % [exit_count])
 		return false
+	return true
+
+func _generate_map() -> Array[String]:
+	for _attempt in range(GEN_MAP_ATTEMPTS):
+		var rows: Array[String] = _try_generate_map()
+		
+		if not rows.is_empty():
+			return rows
+		
+	push_warning("Map generation failed! Using test map.")
+	return TEST_MAP_ROWS
+
+func _try_generate_map() -> Array[String]:
+	var rows: Array[String] = []
+	var grid: Array = []
+	
+	for y in range(GEN_HEIGHT):
+		var row: Array = []
+		for x in range(GEN_WIDTH):
+			row.append("#")
+		grid.append(row)
+	
+	var rooms: Array[Rect2i] = []
+	
+	for _attempt in range(GEN_ROOM_ATTEMPTS):
+		var w: int = map_rng.randi_range(GEN_ROOM_MIN_WIDTH, GEN_ROOM_MAX_WIDTH)
+		var h: int = map_rng.randi_range(GEN_ROOM_MIN_HEIGHT, GEN_ROOM_MAX_HEIGHT)
+		var x: int = map_rng.randi_range(1, GEN_WIDTH - w - 1)
+		var y: int = map_rng.randi_range(1, GEN_HEIGHT - h - 1)
+		var room: Rect2i = Rect2i(x, y, w, h)
+		
+		if _room_overlaps(room, rooms):
+			continue
+		
+		_carve_rect(grid, room)
+		rooms.append(room)
+		
+		if rooms.size() >= GEN_MAX_ROOMS:
+			break
+		
+	if rooms.size() < GEN_MIN_ROOMS:
+		return rows
+	
+	rooms.sort_custom(func(a: Rect2i, b: Rect2i) -> bool: return a.get_center().x + a.get_center().y * 0.5 < b.get_center().x + b.get_center().y * 0.5)
+	
+	for i in range(1, rooms.size()):
+		_carve_corridor(grid, rooms[i - 1].get_center(), rooms[i].get_center())
+	
+	for _loop in range(GEN_EXTRA_LOOPS):
+		var a: int = map_rng.randi_range(0, rooms.size() - 1)
+		var b: int = map_rng.randi_range(0, rooms.size() - 1)
+		
+		if a != b:
+			_carve_corridor(grid, rooms[a].get_center(), rooms[b].get_center())
+	
+	for room in rooms:
+		if room.size.x >= 6 and room.size.y >= 5:
+			var center: Vector2i = room.get_center()
+			grid[center.y][center.x] = "#"
+			grid[center.y][center.x - 1] = "#"
+	
+	if not _place_markers(grid):
+		return rows
+	
+	for y in range(GEN_HEIGHT):
+		var line: String = ""
+		for x in range(GEN_WIDTH):
+			line += grid[y][x]
+		rows.append(line)
+	
+	return rows
+
+func _room_overlaps(room: Rect2i, rooms: Array[Rect2i]) -> bool:
+	var padded_room: Rect2i = room.grow(1)
+	
+	for other_room in rooms:
+		if padded_room.intersects(other_room):
+			return true
+	
+	return false
+
+func _carve_rect(grid: Array, room: Rect2i) -> void:
+	for y in range(room.position.y, room.end.y):
+		for x in range(room.position.x, room.end.x):
+			grid[y][x] = "."
+
+func _carve_corridor(grid: Array, from_cell: Vector2i, to_cell: Vector2i) -> void:
+	if map_rng.randf() < 0.5:
+		for x in range(
+			mini(from_cell.x, to_cell.x),
+			maxi(from_cell.x, to_cell.x) + 1
+		):
+			grid[from_cell.y][x] = "."
+		
+		for y in range(
+			mini(from_cell.y, to_cell.y,),
+			maxi(from_cell.y, to_cell.y) + 1
+		):
+			grid[y][to_cell.x] = "."
+	else:
+		for y in range(
+			mini(from_cell.y, to_cell.y),
+			maxi(from_cell.y, to_cell.y) + 1
+		):
+			grid[y][from_cell.x] ="."
+		
+		for x in range(
+			mini(from_cell.x, to_cell.x),
+			maxi(from_cell.x, to_cell.x) + 1
+		):
+			grid[to_cell.y][x] = "."
+
+func _grid_distances(grid: Array, start: Vector2i) -> Dictionary:
+	var distances: Dictionary = {start: 0}
+	var queue: Array[Vector2i] = [start]
+	var head: int = 0
+	
+	while head < queue.size():
+		var cell: Vector2i = queue[head]
+		head += 1
+		
+		for direction in MOVE_ACTIONS.values():
+			var next_cell: Vector2i = cell + direction
+			
+			if grid[next_cell.y][next_cell.x] != ".":
+				continue
+			
+			if distances.has(next_cell):
+				continue
+			
+			distances[next_cell] = distances[cell] + 1
+			queue.append(next_cell)
+	return distances
+
+func _max_distance(distances: Dictionary) -> int:
+	var best: int = 0
+	for value in distances.values():
+		best = maxi(best, value)
+	return best
+
+func _place_markers(grid: Array) -> bool:
+	var floor_cells: Array[Vector2i] = []
+	
+	for y in range(GEN_HEIGHT):
+		for x in range(GEN_WIDTH):
+			if grid[y][x] == ".":
+				floor_cells.append(Vector2i(x, y))
+	
+	var entrance: Vector2i = floor_cells[map_rng.randi_range(0, floor_cells.size() - 1)]
+	var from_entrance: Dictionary = _grid_distances(grid, entrance)
+	
+	if from_entrance.size() != floor_cells.size():
+		return false
+	
+	var max_from_entrance: int = _max_distance(from_entrance)
+	var card_options: Array[Vector2i] = []
+	
+	for cell in floor_cells:
+		if from_entrance[cell] >= max_from_entrance * 0.6:
+			card_options.append(cell)
+	
+	var card: Vector2i = card_options[map_rng.randi_range(0, card_options.size() - 1)]
+	
+	if from_entrance[card] < GEN_MIN_ENTRANCE_TO_CARD:
+		return false
+	
+	var from_card: Dictionary = _grid_distances(grid, card)
+	var max_from_card: int = _max_distance(from_card)
+	var exit_options: Array[Vector2i] = []
+	
+	for cell in floor_cells:
+		if from_card[cell] >= max_from_card * 0.6 and from_entrance[cell] >= 8:
+			exit_options.append(cell)
+	
+	if exit_options.is_empty():
+		return false
+	
+	var exit: Vector2i = exit_options[map_rng.randi_range(0, exit_options.size() - 1)]
+	var monster_options: Array[Vector2i] = []
+	
+	for cell in floor_cells:
+		var near_card: bool = from_card[cell] >= 5 and from_card[cell] <= 10
+		if near_card and from_entrance[cell] >= 14 and cell != exit:
+			monster_options.append(cell)
+	
+	if monster_options.is_empty():
+		return false
+	
+	var monster: Vector2i = monster_options[map_rng.randi_range(0, monster_options.size() - 1)]
+	
+	grid[entrance.y][entrance.x] = "E"
+	grid[card.y][card.x] = "K"
+	grid[exit.y][exit.x] = "X"
+	grid[monster.y][monster.x] = "M"
 	return true
 
 func _build_astar() -> void:
