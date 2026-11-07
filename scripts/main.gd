@@ -15,16 +15,16 @@ const WALL_COLOR: Color = Color(0.12, 0.90, 0.38, 1.0)
 const PLAYER_COLOR: Color = Color(0.96, 0.98, 1.0, 1.0)
 
 const PLAYER_TURN_SPEED: float = 25.0
-const PLAYER_STRETCH: float = 0.12
+const PLAYER_STRETCH: float = 0.3
 
-const PING_SPEED: float = 420.0 ## This is how fast the ring/circle grows 
-const PING_MAX_RADIUS: float = 9.5 * TILE_SIZE
+const PING_SPEED: float = 200.0 ## This is how fast the ring/circle grows 
+const PING_MAX_RADIUS: float = 10.5 * TILE_SIZE
 const PING_COOLDOWN: float = 0.7 
 const PING_RING_WIDTH: float = 2.0 ## I like it at TWO, no more, no more, no esse. 
 const PING_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
-const PING_NOISE_RANGE_TILES: float = 12.0 ## How far the monster can hear a ping, its larger than the radius on purpose
+const PING_NOISE_RANGE_TILES: float = 11.0 ## How far the monster can hear a ping, its larger than the radius on purpose
 
-const FOOTSTEP_NOISE_RANGE_TILES: float = 3.5 ## I think this might be TOO HIGH, but also i dont care, but also i do care...
+const FOOTSTEP_NOISE_RANGE_TILES: float = 2.5 ## I think this might be TOO HIGH, but also i dont care, but also i do care...
 const FOOTSTEP_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
 
 const SENSE_RANGE_TILES: float = 7.0 ## When its actively hunting
@@ -150,12 +150,12 @@ const GEN_HEIGHT: int = 24
 const GEN_MAP_ATTEMPTS: int = 50
 const GEN_ROOM_ATTEMPTS: int = 120
 const GEN_MIN_ROOMS: int = 6
-const GEN_MAX_ROOMS: int = 11
+const GEN_MAX_ROOMS: int = 12
 const GEN_ROOM_MIN_WIDTH: int = 4
 const GEN_ROOM_MAX_WIDTH: int = 8
 const GEN_ROOM_MIN_HEIGHT: int = 3
 const GEN_ROOM_MAX_HEIGHT: int = 6
-const GEN_EXTRA_LOOPS: int = 3
+const GEN_EXTRA_LOOPS: int = 4
 const GEN_MIN_ENTRANCE_TO_CARD: int = 18
 
 class ScanPoint:
