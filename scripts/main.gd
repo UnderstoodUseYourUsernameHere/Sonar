@@ -99,6 +99,7 @@ const MONSTER_COLOR: Color = Color(0.85, 0.12, 0.15, 1.0)
 const MONSTER_DOT_COUNT: int = 11
 const MONSTER_DOT_COUNT_VARIANCE: int = 3
 const MONSTER_CLUSTER_RADIUS: float = TILE_SIZE * 0.38
+const MONSTER_SCAN_RADIUS: float  = TILE_SIZE * 0.42
 
 
 const CARD_COLOR: Color = Color(1.0, 0.82, 0.18, 1.0)
@@ -110,7 +111,7 @@ const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
 const EXIT_DIM_ALPHA: float = 0.30
 const EXIT_FLASH_DURATION: float = 1.0
 
-const DEBUG_SHOW_MONSTER: bool = false
+const DEBUG_SHOW_MONSTER: bool = true
 
 const MAP_ROWS: Array[String] = [
 	"################################",
@@ -945,6 +946,26 @@ func _cast_scan_ray(origin: Vector2, direction: Vector2, max_distance: float) ->
 			return point
 	return null
 
+func _monster_ray_hit_distance(origin: Vector2, direction: Vector2) -> float:
+	var to_monster: Vector2 = monster_draw_position - origin
+	var along: float = to_monster.dot(direction)
+	
+	if along <= 0.0:
+		return INF
+	
+	var miss_squared: float = to_monster.length_squared() - along * along
+	var radius_squared: float = MONSTER_SCAN_RADIUS * MONSTER_SCAN_RADIUS
+	
+	if miss_squared > radius_squared:
+		return INF
+	
+	var hit_distance: float = along - sqrt(radius_squared - miss_squared) 
+	
+	if hit_distance <= 0.0:
+		return INF
+	
+	return hit_distance
+
 func _build_pulse_hits(pulse: SonarPulse) -> void:
 	var angle_offset: float = scan_rng.randf_range(0.0, TAU / SCAN_RAY_COUNT)
 	
@@ -953,6 +974,17 @@ func _build_pulse_hits(pulse: SonarPulse) -> void:
 		var direction: Vector2 = Vector2.from_angle(angle)
 		var hit: ScanPoint = _cast_scan_ray(pulse.origin, direction, PING_MAX_RADIUS)
 		pulse.wave_directions.append(direction)
+		
+		var wall_distance: float = PING_MAX_RADIUS
+		
+		if hit != null:
+			wall_distance = hit.distance
+			
+		var monster_distance: float = _monster_ray_hit_distance(pulse.origin, direction)
+			
+		if monster_distance < wall_distance:
+			pulse.wave_stop_distances.append(monster_distance)
+			continue
 		
 		if hit == null:
 			pulse.wave_stop_distances.append(PING_MAX_RADIUS)
