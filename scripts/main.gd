@@ -17,14 +17,14 @@ const PLAYER_COLOR: Color = Color(0.96, 0.98, 1.0, 1.0)
 const PLAYER_TURN_SPEED: float = 25.0
 const PLAYER_STRETCH: float = 0.12
 
-const PING_SPEED: float = 320.0 ## This is how fast the ring/circle grows 
-const PING_MAX_RADIUS: float = 8.5 * TILE_SIZE
-const PING_COOLDOWN: float = 0.6
-const PING_RING_WIDTH: float = 1.0
+const PING_SPEED: float = 420.0 ## This is how fast the ring/circle grows 
+const PING_MAX_RADIUS: float = 9.5 * TILE_SIZE
+const PING_COOLDOWN: float = 0.7 
+const PING_RING_WIDTH: float = 2.0 ## I like it at TWO, no more, no more, no esse. 
 const PING_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
 const PING_NOISE_RANGE_TILES: float = 12.0 ## How far the monster can hear a ping, its larger than the radius on purpose
 
-const FOOTSTEP_NOISE_RANGE_TILES: float = 3.5
+const FOOTSTEP_NOISE_RANGE_TILES: float = 3.5 ## I think this might be TOO HIGH, but also i dont care, but also i do care...
 const FOOTSTEP_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
 
 const SENSE_RANGE_TILES: float = 7.0 ## When its actively hunting
