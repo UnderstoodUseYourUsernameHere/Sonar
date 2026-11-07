@@ -150,13 +150,15 @@ const GEN_HEIGHT: int = 24
 const GEN_MAP_ATTEMPTS: int = 50
 const GEN_ROOM_ATTEMPTS: int = 120
 const GEN_MIN_ROOMS: int = 6
-const GEN_MAX_ROOMS: int = 12
+const GEN_MAX_ROOMS: int = 11
 const GEN_ROOM_MIN_WIDTH: int = 4
 const GEN_ROOM_MAX_WIDTH: int = 8
 const GEN_ROOM_MIN_HEIGHT: int = 3
 const GEN_ROOM_MAX_HEIGHT: int = 6
-const GEN_EXTRA_LOOPS: int = 4
+const GEN_EXTRA_LOOPS: int = 3
 const GEN_MIN_ENTRANCE_TO_CARD: int = 18
+const CAMPAIGN_LEVELS: int = 5
+static var campaign_level: int = -1
 
 class ScanPoint:
 	var position: Vector2
@@ -410,21 +412,27 @@ func _draw_victory() -> void:
 	)
 	
 	var font: Font = ThemeDB.fallback_font
+	var victory_title: String = "SECTOR CLEAR!"
+	var victory_prompt: String = "R RETRY    N NEXT SECTOR"
+	
+	if campaign_level >= CAMPAIGN_LEVELS:
+		victory_title = "CAMPAIGN COMPLETE!"
+		victory_prompt = "R RETRY    N NEW CAMPAIGN" ## Campaign is a bit tacky, but idk what other thing to name it?
 	
 	draw_string(
 		font,
 		Vector2(0.0, 320.0),
-		"ACCESS GRANTED",
+		victory_title,
 		HORIZONTAL_ALIGNMENT_CENTER,
 		screen_size.x,
 		42,
-		Color(0.3, 1.0, 0.55, 1.0)
+		Color(0.3, 1.0, 0.55, 1.0) ## Might be a bit too light green for my taste
 	)
 	
 	draw_string(
 		font,
 		Vector2(0.0, 365.0),
-		"YOU HAVE ESCAPED THE STATION!",
+		"YOU HAVE ESCAPED THE STATION!", ## Should it be a station? I think so, i mean, im NOT doing assets for this so this is as much exposition as ill add. 
 		HORIZONTAL_ALIGNMENT_CENTER,
 		screen_size.x,
 		22,
@@ -434,7 +442,7 @@ func _draw_victory() -> void:
 	draw_string(
 		font,
 		Vector2(0.0, 405.0),
-		"PRESS R TO PLAY AGAIN",
+		victory_prompt,
 		HORIZONTAL_ALIGNMENT_CENTER,
 		screen_size.x,
 		18,
@@ -999,6 +1007,18 @@ func _process(delta: float) -> void:
 			retry_map_seed = current_map_seed
 			retry_map_seed_is_set = true
 			get_tree().reload_current_scene()
+		elif Input.is_action_just_pressed("new_map"):
+			retry_map_seed_is_set = false
+			
+			if has_won and campaign_level < CAMPAIGN_LEVELS:
+				campaign_level += 1
+			else:
+				campaign_level = 1
+			
+			get_tree().reload_current_scene()
+		
+		queue_redraw()
+		return
 		
 		queue_redraw()
 		return
@@ -1967,6 +1987,21 @@ func _draw_hud() -> void:
 		map_width * TILE_SIZE - 18.0,
 		12,
 		Color(0.75, 1.0, 0.82, 0.75)
+	)
+	
+	var sector_label: String = "SECTOR %02d / %02d" % [
+		campaign_level,
+		CAMPAIGN_LEVELS
+	]
+	
+	draw_string(
+		font,
+		Vector2(18.0, 64.0),
+		sector_label,
+		HORIZONTAL_ALIGNMENT_LEFT,
+		310.0,
+		12,
+		Color(0.75, 1.0, 0.85, 0.70)
 	)
 	
 	_draw_ping_cooldown()
