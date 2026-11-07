@@ -117,7 +117,7 @@ const EXIT_FLASH_DURATION: float = 1.0
 
 const DEBUG_SHOW_MONSTER: bool = true
 
-const MAP_ROWS: Array[String] = [
+const TEST_MAP_ROWS: Array[String] = [
 	"################################",
 	"#.....#........#...............#",
 	"#.....#..##....#...####........#",
@@ -186,6 +186,8 @@ enum MonsterState {
 var map_width: int = 0
 var map_height: int = 0
 var map_is_valid: bool = false
+
+var map_rows: Array[String] = []
 
 var player_cell: Vector2i = Vector2i.ZERO
 var player_draw_position: Vector2 = Vector2.ZERO
@@ -282,6 +284,7 @@ var astar: AStarGrid2D = AStarGrid2D.new() ## I really like this name for some r
 var monster_path: Array[Vector2i] = []
 
 func _ready() -> void:
+	map_rows = TEST_MAP_ROWS
 	if not _parse_map():
 		set_process(false)
 		return
@@ -409,14 +412,14 @@ func _draw_victory() -> void:
 	)
 
 func _parse_map() -> bool:
-	if MAP_ROWS.is_empty():
-		push_error("MAP_ROWS cant be empty!")
+	if map_rows.is_empty():
+		push_error("map_rows cant be empty!")
 		return false
 	
 	wall_cells.clear()
 	walkable_cells.clear()
-	map_height = MAP_ROWS.size()
-	map_width = MAP_ROWS[0].length()
+	map_height = map_rows.size()
+	map_width = map_rows[0].length()
 	
 	var start_count: int = 0
 	var monster_count: int = 0 
@@ -424,10 +427,10 @@ func _parse_map() -> bool:
 	var exit_count: int = 0
 	
 	for y in range(map_height):
-		var row: String = MAP_ROWS[y]
+		var row: String = map_rows[y]
 		
 		if row.length() != map_width:
-			push_error("MAP_ROWS row %d has %d characters; expected %d!" % [y, row.length(), map_width])
+			push_error("map_rows row %d has %d characters; expected %d!" % [y, row.length(), map_width])
 			return false
 		
 		for x in range(map_width): 
@@ -864,7 +867,7 @@ func _is_walkable(cell: Vector2i) -> bool:
 	if cell.x >= map_width or cell.y >= map_height:
 		return false
 	
-	var tile: String = MAP_ROWS[cell.y].substr(cell.x, 1)
+	var tile: String = map_rows[cell.y].substr(cell.x, 1)
 	return tile != "#"
 	
 
@@ -886,7 +889,7 @@ func _is_wall(cell: Vector2i) -> bool:
 	if cell.x >= map_width or cell.y >= map_height:
 		return true
 	
-	return MAP_ROWS[cell.y].substr(cell.x, 1) == "#"
+	return map_rows[cell.y].substr(cell.x, 1) == "#"
 
 func _has_line_of_sight(from_cell: Vector2i, to_cell: Vector2i) -> bool:
 	var x: int = from_cell.x
