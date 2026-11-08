@@ -26,6 +26,10 @@ const PING_NOISE_RANGE_TILES: float = 11.0 ## How far the monster can hear a pin
 
 const FOOTSTEP_NOISE_RANGE_TILES: float = 2.5 ## I think this might be TOO HIGH, but also i dont care, but also i do care...
 const FOOTSTEP_RING_COLOR: Color = Color(0.35, 1.0, 0.35, 1.0)
+const FOOTSTEP_MARK_DURATION: float = 0.24
+const FOOTSTEP_MARK_SPREAD: float = TILE_SIZE * 0.45
+const FOOTSTEP_MARK_ALPHA: float = 0.7 ## Alphas sigma beta always decides the transparency of something, full alpha is opaque... Brilliant work, Kojima.
+const STEP_HINT_DURATION: float = 10.0
 
 const SENSE_RANGE_TILES: float = 8.0 ## When its actively hunting
 const SENSE_RANGE_QUIET_TILES: float = 4.0 ## Wandering
@@ -63,6 +67,8 @@ const MONSTER_LUNGE_RING_COLOR: Color = Color(1.0, 0.15, 0.2, 1.0)
 const AWARENESS_HUNT_THRESHOLD: float = 1.0
 const AWARENESS_AFTER_LOST_HUNT: float = 0.3
 const MONSTER_HUNT_MOVE_TIME: float = 0.15 
+const MONSTER_HUNT_TIME_REDUCTION_PER_SECTOR: float = 0.00025
+const MONSTER_HUNT_MOVE_TIME_FLOOR: float = 0.14
 const MONSTER_HUNT_LOSE_SECONDS: float = 2.5
 const MONSTER_HUNT_PROXIMITY_TILES: float = 2.0
 const MONSTER_ATTACK_TRIGGER_DISTANCE: float = TILE_SIZE * 0.9
@@ -194,6 +200,11 @@ class SenseArc:
 	var born_time: float = 0.0
 	
 
+class FootStepMark:
+	var position: Vector2 = Vector2.ZERO
+	var direction: Vector2 = Vector2.UP
+	var born_time: float = 0.0
+
 enum MonsterState {
 	ROAMING,
 	INVESTIGATING,
@@ -271,6 +282,7 @@ var monster_snapshot_position: Vector2 = Vector2.ZERO
 var monster_snapshot_time: float = -1000.0
 
 var sense_arcs: Array[SenseArc] = []
+var footstep_marks: Array[FootStepMark] = []
 var next_sense_time: float = 0.0
 var monster_sense_position: Vector2 = Vector2.ZERO
 var monster_sense_time: float = -1000.0
@@ -729,7 +741,7 @@ func _monster_move_time_for_state() -> float:
 		MonsterState.STALKING:
 			return MONSTER_STALK_MOVE_TIME
 		MonsterState.HUNTING:
-			return MONSTER_HUNT_MOVE_TIME
+			return maxf(MONSTER_HUNT_MOVE_TIME - float(campaign_level - 1) * MONSTER_HUNT_TIME_REDUCTION_PER_SECTOR, MONSTER_HUNT_MOVE_TIME_FLOOR) 
 		_:
 			return MONSTER_ROAM_MOVE_TIME
 
@@ -1032,6 +1044,7 @@ func _process(delta: float) -> void:
 	
 	game_time += delta
 	_update_scan_points()
+	_update_footstep_marks()
 	
 	if Input.is_action_just_pressed("ping"):
 		_try_emit_ping()
@@ -1053,6 +1066,7 @@ func _process(delta: float) -> void:
 			player_draw_position = move_destination
 			is_moving = false
 			_make_noise(player_cell, FOOTSTEP_NOISE_RANGE_TILES, AWARENESS_PER_FOOTSTEP)
+			_add_footstep_mark()
 	
 	if not is_moving:
 		var next_direction: Vector2i = _choose_move_direction()
@@ -1311,6 +1325,20 @@ func _make_noise(cell: Vector2i, range_tiles: float, loudness: float) -> void:
 	last_noise_time = game_time
 	last_noise_range_tiles = range_tiles
 	last_noise_loudness = loudness
+
+func _add_footstep_mark() -> void:
+	var mark: FootStepMark = FootStepMark.new() ## CecillL!!!! I turned into a footstep, Cecilll!!!!!
+	mark.position = player_draw_position
+	mark.direction = Vector2(player_facing)
+	mark.born_time = game_time
+	footstep_marks.append(mark) ## Cecill!! Ive turned into markception, cecill!!
+
+func _update_footstep_marks() -> void:
+	for index in range(footstep_marks.size() - 1, -1, -1):
+		var age: float = game_time - footstep_marks[index].born_time
+		
+		if age >= FOOTSTEP_MARK_DURATION:
+			footstep_marks.remove_at(index)
 
 func _monster_can_hear(cell: Vector2i, range_tiles: float) -> bool:
 	var distance: float = monster_draw_position.distance_to(_cell_center(cell))
@@ -1573,7 +1601,7 @@ func _draw() -> void:
 		draw_arc(monster_draw_position, PING_NOISE_RANGE_TILES * TILE_SIZE, 0.0, TAU, 64, Color(1.0, 0.3, 0.3, 0.15), 1.0, true)
 		_draw_monster_at(monster_draw_position, 0.35)
 	
-	_draw_footsteps_ring()
+	_draw_footstep_marks()
 	_draw_player()
 	_draw_hud()
 	
@@ -1801,6 +1829,35 @@ func _draw_footsteps_ring() -> void:
 		true
 	)
 
+func _draw_footstep_marks() -> void:
+	for mark in footstep_marks:
+		var age: float = game_time - mark.born_time
+		var progress: float = clampf(
+			age / FOOTSTEP_MARK_DURATION,
+			0.0,
+			1.0
+		)
+		
+		var side: Vector2 = Vector2(-mark.direction.y, mark.direction.x)
+		var spread: float = lerpf(
+			TILE_SIZE * 0.15,
+			FOOTSTEP_MARK_SPREAD,
+			progress
+		)
+		
+		var half_length: Vector2 = mark.direction * TILE_SIZE * 0.08
+		
+		var color: Color = Color(
+			FOOTSTEP_RING_COLOR,
+			FOOTSTEP_MARK_ALPHA * (1.0 - progress)
+		)
+		
+		var left: Vector2 = mark.position + side * spread
+		var right: Vector2 = mark.position - side * spread
+		
+		draw_line(left - half_length, left + half_length, color, 1.5, true)
+		draw_line(right - half_length, right + half_length, color, 1.5, true)
+
 func _draw_monster_at(center: Vector2, alpha: float) -> void:
 	var color: Color = Color(MONSTER_COLOR, alpha)
 	
@@ -2010,6 +2067,23 @@ func _draw_hud() -> void:
 		12,
 		Color(0.75, 1.0, 0.85, 0.70)
 	)
+	
+	if game_time < STEP_HINT_DURATION:
+		var hint_alpha: float = clampf(
+			(STEP_HINT_DURATION - game_time) / 2.0,
+			0.0,
+			1.0
+		)
+		
+		draw_string(
+			font,
+			Vector2(18.0, 86.0),
+			"MOVEMENT MAKES NOISE",
+			HORIZONTAL_ALIGNMENT_LEFT,
+			300.0,
+			14,
+			Color(0.7, 1.0, 0.8, hint_alpha)
+		)
 	
 	_draw_ping_cooldown()
 
