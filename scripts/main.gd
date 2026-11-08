@@ -993,7 +993,7 @@ func _update_monster_movement(delta: float) -> void:
 	if monster_listen_remaining > 0.0 and not is_monster_moving:
 		return
 	
-	if not is_monster_moving and not monster_path.is_empty():
+	if not is_monster_moving and not monster_is_attacking and monster_lunge_remaining <= 0.0 and not monster_path.is_empty():
 		monster_move_destination_cell = monster_path.pop_front()
 		monster_move_source = monster_draw_position
 		monster_move_destination = _cell_center(monster_move_destination_cell)
@@ -1059,7 +1059,7 @@ func _update_monster_stalking(delta: float) -> void:
 		monster_path.clear()
 		
 		if monster_lunge_remaining <= 0.0:
-			_begin_monster_hunting(player_cell)
+			_begin_monster_hunting(monster_stalk_target)
 			
 		return
 	
@@ -1098,11 +1098,26 @@ func _update_monster_stalking(delta: float) -> void:
 			monster_stalk_distance -= 1
 			monster_needs_new_path = true
 		else:
-			monster_lunge_remaining = MONSTER_LUNGE_PAUSE
-			monster_lunge_start_time = game_time
-			monster_path.clear()
+			_prepare_monster_hunt(monster_stalk_target)
+
+func _prepare_monster_hunt(target_cell: Vector2i) -> void:
+	if monster_state == MonsterState.HUNTING:
+		_begin_monster_hunting(target_cell)
+		return
+	
+	if monster_lunge_remaining > 0.0:
+		monster_stalk_target = target_cell
+		return
+	
+	monster_state = MonsterState.STALKING
+	monster_stalk_target = target_cell
+	monster_path.clear()
+	monster_needs_new_path = false
+	monster_lunge_remaining = MONSTER_LUNGE_PAUSE
+	monster_lunge_start_time = game_time
 
 func _begin_monster_hunting(target_cell: Vector2i) -> void:
+	monster_lunge_remaining = 0.0
 	monster_state = MonsterState.HUNTING
 	monster_awareness = 1.0
 	monster_hunt_target = target_cell
@@ -1672,10 +1687,11 @@ func _on_monster_heard_noise() -> void:
 		monster_stalk_creep_remaining -= (MONSTER_STALK_NOISE_CREEP_BONUS * noise_strength)
 		
 		if monster_lunge_remaining > 0.0:
+			monster_stalk_target = last_noise_cell
 			return
 	
 	if monster_awareness >= AWARENESS_HUNT_THRESHOLD or stalking_and_close:
-		_begin_monster_hunting(last_noise_cell)
+		_prepare_monster_hunt(last_noise_cell)
 	elif monster_awareness >= AWARENESS_STALK_THRESHOLD:
 		_begin_monster_stalking(last_noise_cell)
 	else:
