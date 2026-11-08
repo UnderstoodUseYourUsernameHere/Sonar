@@ -2,6 +2,9 @@ extends Node2D
 
 const TILE_SIZE: int = 30
 const MOVE_TIME_PER_TILE: float = 0.16
+const AUDIO_SAMPLE_RATE: int = 22050
+const PING_SOUND_DURATION: float = 0.42
+const FOOTSTEP_SOUND_DURATION: float = 0.07
 
 const MOVE_ACTIONS: Dictionary = {
 	"move_up": Vector2i(0, -1),
@@ -90,7 +93,7 @@ const MONSTER_ROAM_MIN_DISTANCE: int = 8
 const MONSTER_ROAM_ATTEMPTS: int = 40
 
 const MONSTER_GUARD_CHANCE: float = 0.40
-const MONSTER_GUARD_CHANCE_PER_SECTOR: float = 0.40
+const MONSTER_GUARD_CHANCE_PER_SECTOR: float = 0.03
 const MONSTER_GUARD_CHANCE_MAX: float = 0.56
 const MONSTER_GUARD_RADIUS: int = 5
 
@@ -123,7 +126,7 @@ const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
 const EXIT_DIM_ALPHA: float = 0.30
 const EXIT_FLASH_DURATION: float = 1.0
 
-const DEBUG_SHOW_MONSTER: bool = false
+const DEBUG_SHOW_MONSTER: bool = true
 
 const TEST_MAP_ROWS: Array[String] = [
 	"################################",
@@ -245,6 +248,8 @@ var wall_cells: Array[Vector2i] = []
 var walkable_cells: Array[Vector2i] = []
 var scan_points: Array[ScanPoint] = []
 var scan_rng: RandomNumberGenerator = RandomNumberGenerator.new()
+var ping_audio_player: AudioStreamPlayer
+var footstep_audio_player: AudioStreamPlayer
 
 var last_ping_time: float = -1000.0
 
@@ -336,6 +341,7 @@ func _ready() -> void:
 		return
 	
 	map_is_valid = true
+	_setup_basic_audio()
 	monster_rng.randomize()
 	scan_rng.randomize()
 	 
@@ -351,6 +357,99 @@ func _ready() -> void:
 	monster_path.clear()
 	monster_roam_wait_remaining = 0.5
 	queue_redraw()
+
+func _create_audio_player(
+	player_name: String,
+	audio_stream: AudioStream,
+	volume_db: float,
+	polyphony: int
+) -> AudioStreamPlayer:
+	var audio_player: AudioStreamPlayer = AudioStreamPlayer.new()
+	audio_player.name = player_name
+	audio_player.stream = audio_stream
+	audio_player.volume_db = volume_db
+	audio_player.max_polyphony = polyphony
+	add_child(audio_player)
+	return audio_player
+
+func _make_pcm_wav(samples: PackedFloat32Array) -> AudioStreamWAV:
+	var pcm_data: PackedByteArray = PackedByteArray()
+	pcm_data.resize(samples.size() * 2)
+	
+	for index in range(samples.size()):
+		var bounded_sample: float = clampf(samples[index], -1, 1.0)
+		var sample_value: int = roundi(bounded_sample * 32767.0)
+		pcm_data.encode_s16(index * 2, sample_value)
+	
+	var audio_stream: AudioStreamWAV = AudioStreamWAV.new()
+	audio_stream.format = AudioStreamWAV.FORMAT_16_BITS
+	audio_stream.mix_rate = AUDIO_SAMPLE_RATE
+	audio_stream.stereo = false
+	audio_stream.data = pcm_data
+	return audio_stream
+
+func _make_sweep_audio(
+	start_frequency: float,
+	end_frequency: float,
+	duration: float,
+	amplitude: float
+) -> AudioStreamWAV:
+	var frame_count: int = int(AUDIO_SAMPLE_RATE * duration)
+	var samples: PackedFloat32Array = PackedFloat32Array()
+	samples.resize(frame_count)
+	
+	for index in range(frame_count):
+		var time: float = float(index) / AUDIO_SAMPLE_RATE
+		var progress: float = float(index) / float(frame_count - 1)
+		
+		var phase_cycles: float = (
+			start_frequency * time + (end_frequency - start_frequency)
+			* time * time / (2.0 * duration)
+		)
+		
+		var attack: float = clampf(time / 0.01, 0.0, 1.0)
+		var envelope: float = attack * pow(1.0 - progress, 1.8)
+		var tone: float = (
+			sin(TAU * phase_cycles) + 0.18 * sin(TAU * phase_cycles * 2.0)
+		)
+		samples[index] = tone * envelope * amplitude
+	
+	return _make_pcm_wav(samples)
+
+func _make_footstep_audio() -> AudioStreamWAV:
+	var frame_count: int = int(AUDIO_SAMPLE_RATE * FOOTSTEP_SOUND_DURATION)
+	var samples: PackedFloat32Array = PackedFloat32Array()
+	samples.resize(frame_count)
+	
+	var audio_rng: RandomNumberGenerator =RandomNumberGenerator.new()
+	audio_rng.seed = 24173
+	
+	for index in range(frame_count):
+		var time: float = float(index) / AUDIO_SAMPLE_RATE
+		var attack: float = clampf(time / 0.002, 0.0, 1.0)
+		var envelope: float = attack * exp(-55.0 * time)
+		
+		var low_thump: float = sin(TAU * 72.0 * time) * 0.65
+		var surface_noise: float = audio_rng.randf_range(-1.0, 1.0) * 0.30
+		
+		samples[index] = (
+			low_thump + surface_noise * envelope * 0.30
+		)
+	return _make_pcm_wav(samples)
+
+func _setup_basic_audio() -> void:
+	ping_audio_player = _create_audio_player(
+		"PingAudio",
+		_make_sweep_audio(820.0, 250.0, PING_SOUND_DURATION, 0.28),
+		-10.0,
+		1
+	)
+	footstep_audio_player = _create_audio_player(
+		"FootstepAudio",
+		_make_footstep_audio(),
+		-23.0,
+		3
+	)
 
 func _check_player_caught(delta: float) -> void:
 	if game_over:
@@ -1067,6 +1166,8 @@ func _process(delta: float) -> void:
 			is_moving = false
 			_make_noise(player_cell, FOOTSTEP_NOISE_RANGE_TILES, AWARENESS_PER_FOOTSTEP)
 			_add_footstep_mark()
+			
+			footstep_audio_player.play()
 	
 	if not is_moving:
 		var next_direction: Vector2i = _choose_move_direction()
@@ -1316,6 +1417,7 @@ func _try_emit_ping() -> void:
 		
 	_make_noise(origin_cell, PING_NOISE_RANGE_TILES, AWARENESS_PER_PING)
 	last_ping_time = game_time
+	ping_audio_player.play()
 
 func _make_noise(cell: Vector2i, range_tiles: float, loudness: float) -> void:
 	if is_equal_approx(last_noise_time, game_time) and loudness < last_noise_loudness:
