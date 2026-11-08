@@ -492,7 +492,7 @@ func _check_player_caught(delta: float) -> void:
 		
 	if distance <= MONSTER_ATTACK_TRIGGER_DISTANCE:
 		monster_is_attacking = true
-		monster_attack_remaining = MONSTER_ATTACK_WINDUP
+		monster_attack_remaining = _attack_windup_for_level()
 		monster_attack_start_time = game_time
 		monster_path.clear()
 
@@ -849,7 +849,70 @@ func _set_monster_path(target_cell: Vector2i) -> void:
 	if not monster_path.is_empty() and monster_path[0] == monster_cell:
 		monster_path.pop_front()
 
+func _is_tutorial() -> bool:
+	return campaign_level == -1
+
+func _sector_pressure() -> float:
+	if _is_tutorial():
+		return 0.0
+	
+	var level_span: int = maxi(CAMPAIGN_LEVELS - 1, 1)
+	
+	return clampf(
+		float(campaign_level - 1) / float(level_span),
+		0.0,
+		1.0
+	)
+
+func _search_seconds_for_level() -> float:
+	if _is_tutorial():
+		return 3.0
+	
+	return MONSTER_SEARCH_DURATION + _sector_pressure() * 2.5
+
+func _roam_wait_for_level() -> float:
+	if _is_tutorial():
+		return 1.25
+	
+	return maxf(
+		MONSTER_ROAM_WAIT - _sector_pressure() * 0.25,
+		0.50
+	)
+	
+
+func _awareness_multiplier_for_level() -> float:
+	if _is_tutorial():
+		return 0.35
+	
+	return 1.0 + _sector_pressure() * 0.20
+
+func _stalk_creep_seconds_for_level() -> float:
+	if _is_tutorial():
+		return 7.0
+	
+	return maxf(
+		MONSTER_STALK_CREEP_SECONDS - _sector_pressure() * 0.7,
+		2.8
+	)
+
+func _stalk_backoff_seconds_for_level() -> float:
+	if _is_tutorial():
+		return 4.0
+	
+	return MONSTER_STALK_BACKOFF_SECONDS + _sector_pressure() * 1.5
+
+func _attack_windup_for_level() -> float:
+	if _is_tutorial():
+		return 0.65
+	
+	return MONSTER_ATTACK_WINDUP
+
+
+
 func _monster_move_time_for_state() -> float:
+	if _is_tutorial():
+		return 0.30
+	
 	match monster_state:
 		MonsterState.INVESTIGATING:
 			return MONSTER_INVESTIGATE_MOVE_TIME
@@ -892,6 +955,9 @@ func _pick_roam_target() -> Vector2i:
 	return walkable_cells[fallback_index]
 
 func _monster_guard_chance_for_level() -> float:
+	if _is_tutorial():
+		return 0.10
+	
 	var levels_after_first: int = campaign_level - 1
 	
 	return minf(MONSTER_GUARD_CHANCE + float(levels_after_first) * MONSTER_GUARD_CHANCE_PER_SECTOR, MONSTER_GUARD_CHANCE_MAX)
@@ -951,7 +1017,7 @@ func _update_monster_roaming(delta: float) -> void:
 	var target_cell: Vector2i = _pick_roam_target()
 	_set_monster_path(target_cell)
 	
-	monster_roam_wait_remaining = MONSTER_ROAM_WAIT
+	monster_roam_wait_remaining = _roam_wait_for_level()
 
 func _begin_monster_investigation(target_cell: Vector2i) -> void:
 	monster_state = MonsterState.INVESTIGATING
@@ -966,14 +1032,14 @@ func _begin_monster_investigation(target_cell: Vector2i) -> void:
 func _begin_monster_search(center_cell: Vector2i) -> void:
 	monster_state = MonsterState.SEARCHING
 	monster_search_center = center_cell 
-	monster_search_time_remaining = MONSTER_SEARCH_DURATION
+	monster_search_time_remaining = _search_seconds_for_level()
 	monster_search_wait_remaining = 0.0
 	monster_path.clear()
 
 func _begin_monster_stalking(target_cell: Vector2i) -> void:
 	if monster_state != MonsterState.STALKING:
 		monster_stalk_distance = MONSTER_STALK_DISTANCE_START
-		monster_stalk_creep_remaining = MONSTER_STALK_CREEP_SECONDS
+		monster_stalk_creep_remaining = _stalk_creep_seconds_for_level()
 		monster_stalk_quiet_time = 0.0
 		monster_lunge_remaining = 0.0
 	
@@ -1014,7 +1080,7 @@ func _update_monster_stalking(delta: float) -> void:
 	if not monster_path.is_empty():
 		return
 		
-	if monster_stalk_quiet_time >= MONSTER_STALK_BACKOFF_SECONDS:
+	if monster_stalk_quiet_time >= _stalk_backoff_seconds_for_level():
 		monster_stalk_quiet_time = 0.0
 		monster_stalk_creep_remaining = MONSTER_STALK_CREEP_SECONDS
 			
@@ -1595,14 +1661,15 @@ func _on_monster_heard_noise() -> void:
 	var stalking_and_close: bool = monster_state == MonsterState.STALKING and noise_is_close
 	
 	var falloff: float = clampf(1.0 - (noise_distance / TILE_SIZE) / AWARENESS_FALLOFF_TILES, AWARENESS_FALLOFF_FLOOR, 1.0)
-	monster_awareness = minf(monster_awareness + last_noise_loudness * falloff, 1.0)
+	monster_awareness = minf(monster_awareness + last_noise_loudness * falloff * _awareness_multiplier_for_level(), 1.0)
 	
 	if last_noise_loudness >= AWARENESS_PER_PING and monster_state != MonsterState.HUNTING:
 		monster_listen_remaining = MONSTER_LISTEN_PAUSE
 	
 	if monster_state == MonsterState.STALKING:
 		monster_stalk_quiet_time = 0.0
-		monster_stalk_creep_remaining -= MONSTER_STALK_NOISE_CREEP_BONUS
+		var noise_strength: float = clampf(last_noise_loudness / AWARENESS_PER_PING, 0.0, 1.0)
+		monster_stalk_creep_remaining -= (MONSTER_STALK_NOISE_CREEP_BONUS * noise_strength)
 		
 		if monster_lunge_remaining > 0.0:
 			return
@@ -2097,7 +2164,7 @@ func _draw_monster_attack() -> void:
 		return
 	
 	var age: float = game_time - monster_attack_start_time
-	var progress: float = clampf(age / MONSTER_ATTACK_WINDUP, 0.0, 1.0)
+	var progress: float = clampf(age / _attack_windup_for_level(), 0.0, 1.0)
 	
 	draw_arc(
 		monster_draw_position,
@@ -2209,6 +2276,9 @@ func _draw_hud() -> void:
 		campaign_level,
 		CAMPAIGN_LEVELS
 	]
+	
+	if _is_tutorial():
+		sector_label = "SECTOR -1 / TUTORIAL"
 	
 	draw_string(
 		font,
