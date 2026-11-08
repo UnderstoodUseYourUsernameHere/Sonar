@@ -3,8 +3,12 @@ extends Node2D
 @export_group("Audio")
 @export var ping_sound: AudioStream
 @export var footstep_sound: AudioStream
+@export var ping_sound_variants: Array[AudioStream] = []
+@export_range(0.0, 0.15, 0.005) var ping_pitch_variation: float = 0.025
 @export_range(-60.0, 0.0, 0.5) var ping_volume_db: float = -12.0
 @export_range(-60.0, 0.0, 0.5) var footstep_volume_db: float = -18.0
+
+const PING_AUDIO_VOICES: int = 3
 
 const TILE_SIZE: int = 30
 const MOVE_TIME_PER_TILE: float = 0.16
@@ -20,10 +24,10 @@ const BACKGROUND_COLOR: Color = Color(0.0, 0.0, 0.0, 1.0)
 const WALL_COLOR: Color = Color(0.12, 0.90, 0.38, 1.0)
 const PLAYER_COLOR: Color = Color(0.96, 0.98, 1.0, 1.0)
 
-const PLAYER_TURN_SPEED: float = 25.0
+const PLAYER_TURN_SPEED: float = 31.0
 const PLAYER_STRETCH: float = 0.12
 
-const PING_SPEED: float = 200.0 ## This is how fast the ring/circle grows 
+const PING_SPEED: float = 225.0 ## This is how fast the ring/circle grows 
 const PING_MAX_RADIUS: float = 10.5 * TILE_SIZE
 const PING_COOLDOWN: float = 0.7 
 const PING_RING_WIDTH: float = 2.0 ## I like it at TWO, no more, no more, no esse. 
@@ -254,6 +258,10 @@ var scan_points: Array[ScanPoint] = []
 var scan_rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var ping_audio_player: AudioStreamPlayer
 var footstep_audio_player: AudioStreamPlayer
+var ping_audio_voices: Array[AudioStreamPlayer] = []
+var next_ping_voice: int = 0
+var last_ping_stream: AudioStream
+var audio_rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
 var last_ping_time: float = -1000.0
 
@@ -352,6 +360,7 @@ func _ready() -> void:
 	
 	monster_rng.randomize()
 	scan_rng.randomize()
+	audio_rng.randomize()
 	 
 	player_draw_position = _cell_center(player_cell)
 	player_draw_angle = Vector2(player_facing).angle()
@@ -397,7 +406,68 @@ func _setup_basic_audio() -> bool:
 		footstep_volume_db,
 		3
 	)
+	
+	ping_audio_voices.append(ping_audio_player)
+	for voice_index in range(1, PING_AUDIO_VOICES):
+		var voice: AudioStreamPlayer = _create_audio_player(
+			"PingAudio%d" % voice_index,
+			ping_sound,
+			ping_volume_db,
+			1
+		)
+		ping_audio_voices.append(voice)
+	
 	return true
+
+func _choose_ping_stream() -> AudioStream:
+	var choices: Array[AudioStream] = []
+	
+	if ping_sound != null:
+		choices.append(ping_sound)
+	
+	for stream in ping_sound_variants:
+		if stream != null and not choices.has(stream):
+			choices.append(stream)
+	
+	if choices.is_empty():
+		return null
+	
+	if choices.size() > 1:
+		choices.erase(last_ping_stream)
+	
+	var choice_index: int = audio_rng.randi_range(0, choices.size() - 1)
+	last_ping_stream = choices[choice_index]
+	return last_ping_stream
+
+func _play_ping_audio() -> void:
+	if ping_audio_voices.is_empty():
+		return
+	
+	var chosen_stream: AudioStream = _choose_ping_stream()
+	
+	if chosen_stream == null:
+		return
+	
+	var voice: AudioStreamPlayer = ping_audio_voices[next_ping_voice]
+	
+	for candidate_voice in ping_audio_voices:
+		if not candidate_voice.playing:
+			voice = candidate_voice
+			break
+	
+	next_ping_voice = (
+		(next_ping_voice + 1)
+		% ping_audio_voices.size()
+	)
+	
+	voice.stop()
+	voice.stream = chosen_stream
+	voice.volume_db = ping_volume_db
+	voice.pitch_scale = audio_rng.randf_range(
+		1.0 - ping_pitch_variation,
+		1.0 + ping_pitch_variation
+	) 
+	voice.play()
 
 func _check_player_caught(delta: float) -> void:
 	if game_over:
@@ -1085,7 +1155,7 @@ func _input(event: InputEvent) -> void:
 		return
 	
 	run_started = true
-	ping_audio_player.play()
+	_play_ping_audio()
 	get_viewport().set_input_as_handled()
 
 func _process(delta: float) -> void:
@@ -1103,19 +1173,20 @@ func _process(delta: float) -> void:
 		elif Input.is_action_just_pressed("new_map"):
 			retry_map_seed_is_set = false
 			
-			if has_won and campaign_level < CAMPAIGN_LEVELS:
-				campaign_level += 1
+			if has_won:
+				if campaign_level == -1:
+					campaign_level = 1
+				elif campaign_level < CAMPAIGN_LEVELS:
+					campaign_level += 1
 			else:
-				campaign_level = 1
+				campaign_level = -1
 			
 			get_tree().reload_current_scene()
 		
 		queue_redraw()
 		return
 		
-		queue_redraw()
-		return
-	
+
 	game_time += delta
 	_update_scan_points()
 	_update_footstep_marks()
@@ -1392,7 +1463,7 @@ func _try_emit_ping() -> void:
 		
 	_make_noise(origin_cell, PING_NOISE_RANGE_TILES, AWARENESS_PER_PING)
 	last_ping_time = game_time
-	ping_audio_player.play()
+	_play_ping_audio()
 
 func _make_noise(cell: Vector2i, range_tiles: float, loudness: float) -> void:
 	if is_equal_approx(last_noise_time, game_time) and loudness < last_noise_loudness:
@@ -1675,6 +1746,7 @@ func _draw() -> void:
 		_draw_debug_path()
 		_draw_monster_ai_debug()
 		_draw_awareness_debug()
+		_draw_footsteps_ring()
 		draw_arc(monster_draw_position, PING_NOISE_RANGE_TILES * TILE_SIZE, 0.0, TAU, 64, Color(1.0, 0.3, 0.3, 0.15), 1.0, true)
 		_draw_monster_at(monster_draw_position, 0.35)
 	

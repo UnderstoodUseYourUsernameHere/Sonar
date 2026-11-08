@@ -3,8 +3,11 @@
 [ext_resource type="Script" uid="uid://c70np2jb00rwa" path="res://scripts/main.gd" id="1_o5qli"]
 [ext_resource type="AudioStream" uid="uid://ccybkucq8jf70" path="res://assets/audio/ping/forceField_003.ogg" id="2_sugp2"]
 [ext_resource type="AudioStream" uid="uid://b4h6aqibh7eo2" path="res://assets/audio/footsteps/footstep05.ogg" id="3_jyhfs"]
+[ext_resource type="AudioStream" uid="uid://bwjgb3ypj3614" path="res://assets/audio/ping/forceField_002.ogg" id="4_tbgi4"]
+[ext_resource type="AudioStream" uid="uid://dmxtdq0i42th" path="res://assets/audio/ping/forceField_004.ogg" id="5_tefeu"]
 
 [node name="Main" type="Node2D" unique_id=1186929180]
 script = ExtResource("1_o5qli")
 ping_sound = ExtResource("2_sugp2")
 footstep_sound = ExtResource("3_jyhfs")
+ping_sound_variants = Array[AudioStream]([ExtResource("4_tbgi4"), ExtResource("5_tefeu")])
