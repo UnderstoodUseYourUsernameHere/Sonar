@@ -245,6 +245,7 @@ var held_directions: Array[Vector2i] = []
 var move_carry: float = 0.0
 
 var game_time: float = 0.0
+var run_started: bool = false
 var game_over: bool = false
 var active_pulses: Array[SonarPulse] = []
 var wall_cells: Array[Vector2i] = []
@@ -1063,8 +1064,35 @@ func _update_monster_searching(delta: float) -> void:
 	
 	monster_search_wait_remaining = MONSTER_SEARCH_WAIT
 
+func _input(event: InputEvent) -> void:
+	if run_started or not map_is_valid:
+		return
+	
+	var start_pressed: bool = false
+	
+	if event is InputEventMouseButton:
+		start_pressed = (
+			event.button_index == MOUSE_BUTTON_LEFT
+			and event.pressed
+		)
+	elif event is InputEventScreenTouch:
+		start_pressed = event.pressed
+	elif event is InputEventKey:
+		start_pressed = (
+			event.pressed
+		)
+	if not start_pressed:
+		return
+	
+	run_started = true
+	ping_audio_player.play()
+	get_viewport().set_input_as_handled()
+
 func _process(delta: float) -> void:
 	if not map_is_valid:
+		return
+	
+	if not run_started:
 		return
 	
 	if game_over or has_won:
@@ -1658,6 +1686,9 @@ func _draw() -> void:
 		_draw_game_over()
 	elif has_won:
 		_draw_victory()
+	
+	if not run_started:
+		_draw_start_screen()
 
 func _build_monster_shape() -> void:
 	monster_dot_offsets.clear()
@@ -2135,6 +2166,50 @@ func _draw_hud() -> void:
 		)
 	
 	_draw_ping_cooldown()
+
+func _draw_start_screen() -> void:
+	var screen_size: Vector2 = Vector2(
+		map_width * TILE_SIZE,
+		map_height * TILE_SIZE
+	)
+	
+	draw_rect(
+		Rect2(Vector2.ZERO, screen_size),
+		Color(0.0, 0.0, 0.0, 0.96),
+		true
+	)
+	
+	var font: Font = ThemeDB.fallback_font
+	
+	draw_string(
+		font,
+		Vector2(0.0, screen_size.y * 0.43),
+		"NYCTOPHOBIA",
+		HORIZONTAL_ALIGNMENT_CENTER,
+		screen_size.x,
+		42,
+		PLAYER_COLOR
+	)
+	
+	draw_string(
+		font,
+		Vector2(0.0, screen_size.y * 0.53),
+		"CLICK OR PRESS ENTER TO START",
+		HORIZONTAL_ALIGNMENT_CENTER,
+		screen_size.x,
+		20,
+		PING_RING_COLOR
+	)
+	
+	draw_string(
+		font,
+		Vector2(0.0, screen_size.y * 0.59),
+		"WASD MOVE    SPACE SCAN    SOUND RECOMMENDED",
+		HORIZONTAL_ALIGNMENT_CENTER,
+		screen_size.x,
+		14,
+		Color(0.75, 1.0, 0.82, 0.8)
+	)
 
 func _draw_ping_cooldown() -> void:
 	var bar_position: Vector2 = Vector2(18.0, 42.0)
