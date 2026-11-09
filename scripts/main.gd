@@ -146,7 +146,7 @@ const EXIT_OPEN_COLOR: Color = Color(0.2, 1.0, 0.45, 1.0)
 const EXIT_DIM_ALPHA: float = 0.30
 const EXIT_FLASH_DURATION: float = 1.0
 
-const DEBUG_SHOW_MONSTER: bool = true
+const DEBUG_SHOW_MONSTER: bool = false
 
 const TEST_MAP_ROWS: Array[String] = [
 	"################################",
@@ -233,6 +233,9 @@ class MonsterCounterPing:
 	var radius: float = 0.0
 	var directions: PackedVector2Array = PackedVector2Array()
 	var stop_distances: PackedFloat32Array = PackedFloat32Array()
+	var previous_radius: float = 0.0
+	var previous_player_distance: float = INF
+	var player_checked: bool = false
 
 enum MonsterState {
 	ROAMING,
@@ -342,6 +345,7 @@ var monster_listen_remaining: float = 0.0
 
 var monster_counter_cooldown: float = 6.0
 var monster_counter_charge_remaining: float = 0.0
+var last_counter_ping_detection_time: float = -1000.0
 var counter_ping_charge_origin: Vector2 = Vector2.ZERO
 var counter_ping_audio_player: AudioStreamPlayer
 var counter_charge_audio_player: AudioStreamPlayer
@@ -1310,6 +1314,8 @@ func _process(delta: float) -> void:
 					campaign_level = 1
 				elif campaign_level < CAMPAIGN_LEVELS:
 					campaign_level += 1
+				else:
+					campaign_level = -1
 			else:
 				campaign_level = -1
 			
@@ -1515,6 +1521,19 @@ func _cast_scan_ray(origin: Vector2, direction: Vector2, max_distance: float) ->
 			return point
 	return null
 
+func _scan_has_clear_path(from_position: Vector2, to_position: Vector2) -> bool:
+	var offset: Vector2 = to_position - from_position
+	var distance: float = offset.length()
+	
+	if distance <= 0.001:
+		return true
+	
+	var hit: ScanPoint = _cast_scan_ray(from_position, offset / distance, distance)
+	if hit == null:
+		return true
+	
+	return hit.distance >= distance - 0.01
+
 func _monster_ray_hit_distance(origin: Vector2, direction: Vector2, monster_position: Vector2) -> float:
 	var to_monster: Vector2 = monster_position - origin
 	var along: float = to_monster.dot(direction)
@@ -1620,6 +1639,7 @@ func _cancel_counter_ping_charge() -> void:
 func _emit_monster_counter_ping() -> void:
 	var pulse: MonsterCounterPing = MonsterCounterPing.new()
 	pulse.origin = counter_ping_charge_origin
+	pulse.previous_player_distance = pulse.origin.distance_to(player_draw_position)
 	
 	for ray_index in range(COUNTER_PING_RAYS):
 		var angle: float = (TAU * float(ray_index) / float(COUNTER_PING_RAYS))
@@ -1642,8 +1662,10 @@ func _emit_monster_counter_ping() -> void:
 func _update_counter_ping(delta: float) -> void:
 	for index in range(active_counter_pings.size() - 1, -1, -1):
 		var pulse: MonsterCounterPing = active_counter_pings[index]
+		pulse.previous_radius = pulse.radius
 		
 		pulse.radius = minf(pulse.radius + COUNTER_PING_SPEED * delta, COUNTER_PING_MAX_RADIUS)
+		_check_counter_ping_player(pulse)
 		if pulse.radius >= COUNTER_PING_MAX_RADIUS:
 			active_counter_pings.remove_at(index)
 	
@@ -1685,6 +1707,30 @@ func _update_counter_ping(delta: float) -> void:
 	if counter_charge_audio_player != null:
 		counter_charge_audio_player.play()
 
+func _check_counter_ping_player(pulse: MonsterCounterPing) -> void:
+	if pulse.player_checked or game_over or has_won:
+		return
+	
+	var distance: float = pulse.origin.distance_to(player_draw_position)
+	var previous_gap: float = (pulse.previous_player_distance - pulse.previous_radius)
+	var current_gap: float = distance - pulse.radius
+	pulse.previous_player_distance = distance
+	
+	if previous_gap < 0.0 or current_gap > 0.0:
+		return
+	
+	pulse.player_checked = true
+	
+	if not _scan_has_clear_path(pulse.origin, player_draw_position): 
+		return
+	
+	if monster_is_attacking:
+		return
+	
+	last_counter_ping_detection_time = game_time
+	
+	var detected_cell: Vector2i = _cell_from_position(player_draw_position)
+	_prepare_monster_hunt(detected_cell)
 
 func _make_noise(cell: Vector2i, range_tiles: float, loudness: float) -> void:
 	if is_equal_approx(last_noise_time, game_time) and loudness < last_noise_loudness:
@@ -2369,6 +2415,7 @@ func _draw_counter_pings() -> void:
 				continue
 			
 			segments.append(pulse.origin + pulse.directions[ray_index] * pulse.radius)
+			segments.append(pulse.origin + pulse.directions[next_index] * pulse.radius)
 		if segments.is_empty():
 			continue
 		
@@ -2527,6 +2574,17 @@ func _draw_hud() -> void:
 			300.0,
 			14,
 			Color(0.7, 1.0, 0.8, hint_alpha)
+		)
+	
+	if game_time - last_counter_ping_detection_time < 1.5:
+		draw_string(
+			font,
+			Vector2(18.0, 108.0),
+			"COUNTERSCAN DETECTED YOU",
+			HORIZONTAL_ALIGNMENT_LEFT,
+			400.0,
+			13,
+			COUNTER_PING_COLOR
 		)
 	
 	_draw_ping_cooldown()
