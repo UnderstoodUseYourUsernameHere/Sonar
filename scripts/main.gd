@@ -8,6 +8,11 @@ extends Node2D
 @export_range(-60.0, 0.0, 0.5) var ping_volume_db: float = -12.0
 @export_range(-60.0, 0.0, 0.5) var footstep_volume_db: float = -18.0
 
+@export_group("MonsterAudio")
+@export var counter_ping_sound: AudioStream
+@export var counter_charge_sound: AudioStream
+@export_range(-60.0, 0.0, 0.5) var counter_ping_volume_db: float = -14.0
+
 const PING_AUDIO_VOICES: int = 3
 
 const TILE_SIZE: int = 30
@@ -122,7 +127,15 @@ const MONSTER_SCAN_RADIUS: float  = TILE_SIZE * 0.42
 const MONSTER_LISTEN_PAUSE: float = 0.7
 
 const MONSTER_SCAN_RETURN_COLOR: Color = Color(1.0, 0.12, 0.20, 1.0)
-const MONSTER_SCAN_RETURN_DURATION: float = 3.0
+const MONSTER_SCAN_RETURN_DURATION: float = 2.0
+
+const COUNTER_PING_MIN_SECTOR: int = 3
+const COUNTER_PING_TRIGGER_STEPS: int = 7
+const COUNTER_PING_CHARGE_SECONDS: float = 0.9
+const COUNTER_PING_SPEED: float = 150.0
+const COUNTER_PING_MAX_RADIUS: float = TILE_SIZE * 7.0
+const COUNTER_PING_RAYS: int = 180
+const COUNTER_PING_COLOR: Color = Color(1.0, 0.28, 0.10, 1.0)
 
 const CARD_COLOR: Color = Color(1.0, 0.82, 0.18, 1.0)
 const CARD_DIM_ALPHA: float = 0.30
@@ -215,6 +228,12 @@ class FootStepMark:
 	var direction: Vector2 = Vector2.UP
 	var born_time: float = 0.0
 
+class MonsterCounterPing:
+	var origin: Vector2 = Vector2.ZERO
+	var radius: float = 0.0
+	var directions: PackedVector2Array = PackedVector2Array()
+	var stop_distances: PackedFloat32Array = PackedFloat32Array()
+
 enum MonsterState {
 	ROAMING,
 	INVESTIGATING,
@@ -252,6 +271,7 @@ var game_time: float = 0.0
 var run_started: bool = false
 var game_over: bool = false
 var active_pulses: Array[SonarPulse] = []
+var active_counter_pings: Array[MonsterCounterPing] = []
 var wall_cells: Array[Vector2i] = []
 var walkable_cells: Array[Vector2i] = []
 var scan_points: Array[ScanPoint] = []
@@ -319,6 +339,12 @@ var monster_is_attacking: bool = false
 var monster_attack_remaining: float = 0.0
 var monster_attack_start_time: float = -1000.0
 var monster_listen_remaining: float = 0.0
+
+var monster_counter_cooldown: float = 6.0
+var monster_counter_charge_remaining: float = 0.0
+var counter_ping_charge_origin: Vector2 = Vector2.ZERO
+var counter_ping_audio_player: AudioStreamPlayer
+var counter_charge_audio_player: AudioStreamPlayer
 
 var card_cell: Vector2i = Vector2i.ZERO
 var card_draw_position: Vector2 = Vector2.ZERO
@@ -416,6 +442,26 @@ func _setup_basic_audio() -> bool:
 			1
 		)
 		ping_audio_voices.append(voice)
+	
+	var counter_stream: AudioStream = counter_ping_sound
+	
+	if counter_stream == null:
+		counter_stream = ping_sound
+	
+	counter_ping_audio_player = _create_audio_player(
+		"CounterPingAudio",
+		counter_stream,
+		counter_ping_volume_db,
+		1
+	)
+	
+	if counter_charge_sound != null:
+		counter_charge_audio_player = _create_audio_player(
+			"CounterChargeAudio",
+			counter_charge_sound,
+			counter_ping_volume_db - 3.0,
+			1
+		)
 	
 	return true
 
@@ -966,6 +1012,9 @@ func _update_monster_movement(delta: float) -> void:
 	if monster_is_attacking and not is_monster_moving:
 		return
 	
+	if monster_counter_charge_remaining > 0.0:
+		return
+	
 	if monster_listen_remaining > 0.0:
 		monster_listen_remaining -= delta
 		
@@ -1082,7 +1131,7 @@ func _update_monster_stalking(delta: float) -> void:
 		
 	if monster_stalk_quiet_time >= _stalk_backoff_seconds_for_level():
 		monster_stalk_quiet_time = 0.0
-		monster_stalk_creep_remaining = MONSTER_STALK_CREEP_SECONDS
+		monster_stalk_creep_remaining = _stalk_creep_seconds_for_level()
 			
 		if monster_stalk_distance < MONSTER_STALK_DISTANCE_START:
 			monster_stalk_distance += 1
@@ -1092,7 +1141,7 @@ func _update_monster_stalking(delta: float) -> void:
 	
 	monster_stalk_creep_remaining -= delta
 	if monster_stalk_creep_remaining <= 0.0:
-		monster_stalk_creep_remaining = MONSTER_STALK_CREEP_SECONDS
+		monster_stalk_creep_remaining = _stalk_creep_seconds_for_level()
 		
 		if monster_stalk_distance > MONSTER_STALK_DISTANCE_MIN:
 			monster_stalk_distance -= 1
@@ -1247,6 +1296,8 @@ func _process(delta: float) -> void:
 		return
 	
 	if game_over or has_won:
+		_cancel_counter_ping_charge()
+		active_counter_pings.clear()
 		if Input.is_action_just_pressed("restart"):
 			retry_map_seed = current_map_seed
 			retry_map_seed_is_set = true
@@ -1309,6 +1360,7 @@ func _process(delta: float) -> void:
 	_update_monster_movement(delta)
 	_update_proximity_sense()
 	_update_monster_ai(delta)
+	_update_counter_ping(delta)
 	_check_card_collection()
 	_check_player_caught(delta)
 	_check_for_victory()
@@ -1546,6 +1598,94 @@ func _try_emit_ping() -> void:
 	last_ping_time = game_time
 	_play_ping_audio()
 
+func _counter_ping_interval_for_level() -> float:
+	return lerpf(6.0, 5.0, _sector_pressure())
+
+func _counter_ping_player_is_near() -> bool:
+	var route: Array[Vector2i] = astar.get_id_path(
+		monster_cell, player_cell
+	)
+	
+	if route.is_empty():
+		return false
+	
+	return route.size() - 1 <= COUNTER_PING_TRIGGER_STEPS
+
+func _cancel_counter_ping_charge() -> void:
+	monster_counter_charge_remaining = 0.0
+	
+	if counter_charge_audio_player != null:
+		counter_charge_audio_player.stop()
+
+func _emit_monster_counter_ping() -> void:
+	var pulse: MonsterCounterPing = MonsterCounterPing.new()
+	pulse.origin = counter_ping_charge_origin
+	
+	for ray_index in range(COUNTER_PING_RAYS):
+		var angle: float = (TAU * float(ray_index) / float(COUNTER_PING_RAYS))
+		var direction: Vector2 = Vector2.from_angle(angle)
+		var hit: ScanPoint = _cast_scan_ray(pulse.origin, direction, COUNTER_PING_MAX_RADIUS)
+		pulse.directions.append(direction)
+		
+		if hit == null: 
+			pulse.stop_distances.append(COUNTER_PING_MAX_RADIUS)
+		else:
+			pulse.stop_distances.append(hit.distance)
+	
+	active_counter_pings.append(pulse)
+	
+	if counter_charge_audio_player != null:
+		counter_charge_audio_player.stop()
+	
+	counter_ping_audio_player.play()
+
+func _update_counter_ping(delta: float) -> void:
+	for index in range(active_counter_pings.size() - 1, -1, -1):
+		var pulse: MonsterCounterPing = active_counter_pings[index]
+		
+		pulse.radius = minf(pulse.radius + COUNTER_PING_SPEED * delta, COUNTER_PING_MAX_RADIUS)
+		if pulse.radius >= COUNTER_PING_MAX_RADIUS:
+			active_counter_pings.remove_at(index)
+	
+	var allowed_state: bool = (monster_state == MonsterState.SEARCHING or monster_state == MonsterState.STALKING)
+	var allowed: bool = (campaign_level >= COUNTER_PING_MIN_SECTOR and allowed_state and not monster_is_attacking and monster_lunge_remaining <= 0.0)
+	if not allowed:
+		_cancel_counter_ping_charge()
+		monster_counter_cooldown = _counter_ping_interval_for_level()
+		return
+	
+	if monster_counter_charge_remaining > 0.0:
+		if not _counter_ping_player_is_near():
+			_cancel_counter_ping_charge()
+			monster_counter_cooldown = _counter_ping_interval_for_level()
+			return
+		
+		monster_counter_charge_remaining = maxf(monster_counter_charge_remaining - delta, 0.0)
+		
+		if monster_counter_charge_remaining <= 0.0:
+			_emit_monster_counter_ping()
+			monster_counter_cooldown = _counter_ping_interval_for_level()
+		
+		return
+	
+	monster_counter_cooldown = maxf(monster_counter_cooldown - delta, 0.0)
+	
+	if monster_counter_cooldown > 0.0 or is_monster_moving:
+		return
+	
+	if not _counter_ping_player_is_near():
+		monster_counter_cooldown = 0.5
+		return
+	
+	monster_path.clear()
+	monster_needs_new_path = true
+	counter_ping_charge_origin = monster_draw_position
+	monster_counter_charge_remaining = COUNTER_PING_CHARGE_SECONDS
+	
+	if counter_charge_audio_player != null:
+		counter_charge_audio_player.play()
+
+
 func _make_noise(cell: Vector2i, range_tiles: float, loudness: float) -> void:
 	if is_equal_approx(last_noise_time, game_time) and loudness < last_noise_loudness:
 		return
@@ -1651,6 +1791,9 @@ func _update_monster_ai(delta: float) -> void:
 		
 		if _monster_can_hear(last_noise_cell, last_noise_range_tiles):
 			_on_monster_heard_noise()
+	
+	if monster_counter_charge_remaining > 0.0:
+		return
 	
 	match monster_state:
 		MonsterState.ROAMING:
@@ -1817,12 +1960,14 @@ func _draw() -> void:
 	)
 	_draw_scan_points()
 	_draw_pulses()
+	_draw_counter_pings()
 	_draw_access_card()
 	_draw_exit_marker()
 	_draw_sense_arcs()
 	_draw_sense_contact()
 	_draw_monster_snapshot()
 	_draw_monster_lunge()
+	_draw_counter_ping_charge()
 	_draw_monster_attack()
 	
 	if DEBUG_SHOW_MONSTER:
@@ -2174,6 +2319,67 @@ func _draw_monster_lunge() -> void:
 	)
 	
 	_draw_monster_at(monster_draw_position, monster_alpha)
+
+func _draw_counter_ping_charge() -> void:
+	if monster_counter_charge_remaining <= 0.0:
+		return
+	
+	var progress: float = clampf(
+		1.0 - monster_counter_charge_remaining / COUNTER_PING_CHARGE_SECONDS, 0.0, 1.0
+	)
+	
+	draw_arc(
+		counter_ping_charge_origin,
+		TILE_SIZE * 0.65,
+		-PI * 0.5,
+		-PI * 0.5 + TAU * progress,
+		32,
+		COUNTER_PING_COLOR,
+		2.0,
+		true
+	)
+	
+	_draw_monster_at(counter_ping_charge_origin, 0.75)
+	
+	draw_string(
+		ThemeDB.fallback_font,
+		Vector2(0.0, map_height * TILE_SIZE - 18.0),
+		"IT CAN SEE YOU TOO, TRY TO TAKE COVER",
+		HORIZONTAL_ALIGNMENT_CENTER,
+		map_width * TILE_SIZE,
+		14,
+		COUNTER_PING_COLOR
+	)
+
+func _draw_counter_pings() -> void:
+	for pulse in active_counter_pings:
+		if pulse.radius <= 0.0:
+			continue
+		
+		var segments: PackedVector2Array = PackedVector2Array()
+		var ray_count: int = pulse.directions.size()
+		
+		for ray_index in range(ray_count):
+			var next_index: int = (ray_index + 1) % ray_count
+			
+			if pulse.radius >= pulse.stop_distances[ray_index]:
+				continue
+			
+			if pulse.radius >= pulse.stop_distances[next_index]:
+				continue
+			
+			segments.append(pulse.origin + pulse.directions[ray_index] * pulse.radius)
+		if segments.is_empty():
+			continue
+		
+		var alpha: float = maxf(0.25, 1.0 - pulse.radius / COUNTER_PING_MAX_RADIUS)
+		
+		draw_multiline(
+			segments,
+			Color(COUNTER_PING_COLOR, alpha),
+			2.0,
+			true
+		)
 
 func _draw_monster_attack() -> void:
 	if not monster_is_attacking:

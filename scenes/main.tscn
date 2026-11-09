@@ -5,9 +5,14 @@
 [ext_resource type="AudioStream" uid="uid://b4h6aqibh7eo2" path="res://assets/audio/footsteps/footstep05.ogg" id="3_jyhfs"]
 [ext_resource type="AudioStream" uid="uid://bwjgb3ypj3614" path="res://assets/audio/ping/forceField_002.ogg" id="4_tbgi4"]
 [ext_resource type="AudioStream" uid="uid://dmxtdq0i42th" path="res://assets/audio/ping/forceField_004.ogg" id="5_tefeu"]
+[ext_resource type="AudioStream" uid="uid://cnombx8vl1vnc" path="res://assets/audio/ping/explosionCrunch_003.ogg" id="6_o6xl0"]
+[ext_resource type="AudioStream" uid="uid://bg51kic4tx1da" path="res://assets/audio/ping/thrusterFire_001.ogg" id="7_tipki"]
 
 [node name="Main" type="Node2D" unique_id=1186929180]
 script = ExtResource("1_o5qli")
 ping_sound = ExtResource("2_sugp2")
 footstep_sound = ExtResource("3_jyhfs")
 ping_sound_variants = Array[AudioStream]([ExtResource("4_tbgi4"), ExtResource("5_tefeu")])
+ping_volume_db = -14.0
+counter_ping_sound = ExtResource("6_o6xl0")
+counter_charge_sound = ExtResource("7_tipki")
