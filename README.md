@@ -7,7 +7,7 @@ What it is:
 
 ## How to use
 
-Itch demo link:
+Itch demo link: https://mustardmustard.itch.io/nyctophobia
 
 Or, you can do this:
 
@@ -37,4 +37,4 @@ Nyctophobia, or however you want to call this game, has the following features:
 
 
 ## Credits
-- SFX: Kenney Interface Sounds (kenney.nl) - CC0
+- SFX: Kenney Scifi/RPG/Impact Sounds (kenney.nl) - CC0
